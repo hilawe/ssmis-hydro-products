@@ -26,13 +26,27 @@ import sys
 import datetime
 import numpy as np
 
+# Import satellite start years from the central config so that when the late
+# constellation transitions from F-17 to WSF-M (or early from F-16 to F-18),
+# only satellite_config.py needs to change.
+try:
+    from satellite_config import late_start_year, early_start_year
+    _LATE_INIT_YEAR  = late_start_year()   # 1987 for F-17 record
+    _EARLY_INIT_YEAR = early_start_year()  # 1992 for F-16 record
+except Exception:
+    # Fallback if satellite_config is not in path (e.g., test environments)
+    _LATE_INIT_YEAR  = 1987
+    _EARLY_INIT_YEAR = 1992
+
 N_LON = 144
 N_LAT = 72
 GRID_SIZE = N_LON * N_LAT
 MISSING = np.float32(-999.99)
 
-INIT_YEAR_F17 = 1987   # corresponds to gpcp_f08 (late constellation)
-INIT_YEAR_F16 = 1992   # corresponds to gpcp_f10 (early constellation)
+# These aliases preserve backward compatibility for any code that imports them
+# directly.  gpcp_late() and gpcp_early() use _LATE_INIT_YEAR / _EARLY_INIT_YEAR.
+INIT_YEAR_F17 = _LATE_INIT_YEAR    # corresponds to gpcp_f08 (late constellation)
+INIT_YEAR_F16 = _EARLY_INIT_YEAR   # corresponds to gpcp_f10 (early constellation)
 
 MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -127,8 +141,8 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
     Applies snow/ice masking and writes gpcp_nesdis_pr1.dat / gpcp_nesdis_pr2.dat.
     """
     os.makedirs(path_out, exist_ok=True)
-    n_months = _months_since(INIT_YEAR_F17)
-    print(f'gpcp_late (f17): processing {n_months} months from {INIT_YEAR_F17}')
+    n_months = _months_since(_LATE_INIT_YEAR)
+    print(f'gpcp_late (f17): processing {n_months} months from {_LATE_INIT_YEAR}')
 
     snw_file = os.path.join(path_in, 'SNW-f17-2.5')
     ice_file = os.path.join(path_in, 'ICE-f17-2.5')
@@ -166,7 +180,13 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
                 # Apply masks (order matches IDL sequential if-then chain)
                 rain = np.where(rain < 0.0, MISSING, rain)
 
-                # Snow mask (months 43-60 = Apr 1990 - Dec 1991: use snow climatology)
+                # Snow mask: months 43-60 = Apr 1990-Dec 1991 in F-17/F-08 record
+                # (these span a period of known F-08 snow-sensor anomaly; use climatology
+                #  instead of the actual observed snow fraction for those 18 months).
+                # NOTE: this jmon range is F-17-record-specific (starts 1987).
+                # If _LATE_INIT_YEAR changes (e.g., WSF-M starts later), recalculate:
+                #   months 43-60 relative to the new start year may not be 1990.
+                # TODO: make this range dynamic based on _LATE_INIT_YEAR.
                 if 43 <= jmon <= 60:
                     snw_ave = read_snow_clim(mo)
                     rain = np.where(snw_ave >= 0.20, MISSING, rain)
@@ -193,8 +213,8 @@ def gpcp_early(path_in='./f16-2.5/', path_out='./gpcp/'):
     Writes gpcp_nesdis_f10_pr1.dat / gpcp_nesdis_f10_pr2.dat.
     """
     os.makedirs(path_out, exist_ok=True)
-    n_months = _months_since(INIT_YEAR_F16)
-    print(f'gpcp_early (f16): processing {n_months} months from {INIT_YEAR_F16}')
+    n_months = _months_since(_EARLY_INIT_YEAR)
+    print(f'gpcp_early (f16): processing {n_months} months from {_EARLY_INIT_YEAR}')
 
     snw_file = os.path.join(path_in, 'SNW-f16-2.5')
     ice_file = os.path.join(path_in, 'ICE-f16-2.5')
@@ -241,12 +261,13 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
     cy, cm = now.year, now.month
     increment_month = cm if cm != 0 else 12
 
-    n_months_f17 = _months_since(INIT_YEAR_F17)   # total months in f17 record
+    n_months_f17 = _months_since(_LATE_INIT_YEAR)    # total months in late record
     icurrent_month = (n_months_f17 - 12) + increment_month
 
     print(f'gpcp_dual: n_months={n_months_f17}, current_month={icurrent_month}')
 
-    # Copy SSA files
+    # Copy SSA files - satellite suffix reflects current constellation primaries
+    # (these names are fixed for GPCP archival compatibility; do not change)
     for src, dst in [
         (os.path.join(path_f17, 'SSA-f17-2.5'), os.path.join(path_out, 'gpcp_nesdis_ssa.dat')),
         (os.path.join(path_f16, 'SSA-f16-2.5'), os.path.join(path_out, 'gpcp_nesdis_f10_ssa.dat')),
@@ -273,10 +294,10 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
              open(out_pr, 'wb') as fpr_out, \
              open(out_ssa, 'wb') as fssa_out:
 
-            # f16 record starts 5 years (60 months) later than f17
-            # Skip first 60 months of f16 files (f17 starts 1987, f16 starts 1992)
-            f16_offset = 60  # months to skip in f16 file
-            n_months_f16 = _months_since(INIT_YEAR_F16)
+            # The early-constellation record starts later than the late-constellation.
+            # Calculate the offset in months between the two start years.
+            f16_offset = (_EARLY_INIT_YEAR - _LATE_INIT_YEAR) * 12   # typically 60 (1992-1987)
+            n_months_f16 = _months_since(_EARLY_INIT_YEAR)
 
             # Open f16 files separately
             f16_pr_fh   = open(f16_pr,  'rb') if os.path.exists(f16_pr)  else None
