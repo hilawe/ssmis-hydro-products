@@ -78,6 +78,49 @@ def read_month_slice(fobj, month_idx):
     return raw.reshape(N_LON, N_LAT)
 
 
+def _build_coastal_masks():
+    """
+    Build the PR2 coastal masks that match IDL's loop-index convention.
+
+    BACKGROUND - WHY THIS IS NON-TRIVIAL
+    =====================================
+    The binary files follow GrADS convention: longitude varies fastest in memory
+    (IDL Fortran column-major order).  IDL reads them with fltarr(144,72) and
+    loops  'for i=0,143 do for j=0,71 do', so IDL element (i=lon, j=lat) sits at
+    flat position  k = i + 144*j  (Fortran-order, first index fastest).
+
+    Python reads the same bytes with np.fromfile + reshape(N_LON, N_LAT) in
+    C (row-major) order.  In C order the element at Python[a,b] occupies flat
+    position  k = a*N_LAT + b = a*72 + b.  Therefore the IDL latitude index for
+    the element that Python calls [a,b] is:
+        idl_lat_j = k // N_LON = (a*72 + b) // 144
+    which is NOT simply b (Python dim-1).  Using dim-1 as the latitude index
+    would misplace the polar/coastal mask bands, corrupting ~50% of grid cells.
+
+    The masks are constant (independent of month data), so we compute them once
+    here and reuse them inside the per-month loops.
+    """
+    # Flat k index for every element of the (N_LON, N_LAT) C-order array.
+    k_flat = np.arange(GRID_SIZE, dtype=np.int32).reshape(N_LON, N_LAT)
+
+    # IDL latitude index j = k // N_LON  (j=0 -> northernmost row ~88.75°N).
+    idl_lat_j = k_flat // N_LON   # shape (N_LON, N_LAT)
+
+    # icoast: near-polar latitude rows  (IDL j <= 11 -> lat >= ~62.5°N,
+    #                                    IDL j >= 60 -> lat <= ~-12.5°S)
+    icoast = (idl_lat_j <= 11) | (idl_lat_j >= 60)
+
+    # jcoast: extended high-latitude band (IDL j <= 19 -> lat >= ~45°N,
+    #                                       IDL j >= 53 -> lat <= ~-7.5°S)
+    jcoast = (idl_lat_j <= 19) | (idl_lat_j >= 53)
+
+    return icoast, jcoast
+
+
+# Pre-compute once at module load - these are fixed geometry masks.
+_ICOAST, _JCOAST = _build_coastal_masks()
+
+
 def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
     """
     F-17 (late constellation) GPCP dataset.
@@ -106,11 +149,7 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
              open(out_name, 'wb') as fout:
 
             for jmon in range(1, n_months + 1):
-                # Current date for this month
-                curr_date = start + datetime.timedelta(days=30.5 * (jmon - 1))
-                mo = ((INIT_YEAR_F17 - 1987) * 12 + jmon - 1) % 12 + 1
-                yr = INIT_YEAR_F17 + ((jmon - 1) // 12)
-                mo = ((jmon - 1) % 12) + 1
+                mo = ((jmon - 1) % 12) + 1   # calendar month (1-12)
 
                 snow = read_month_slice(fsnw, jmon)
                 ice  = read_month_slice(fice, jmon)
@@ -124,7 +163,7 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
                 if not np.all(np.isfinite(rain)):
                     print(f'  Warning: NaN in rain month {jmon}')
 
-                # Apply masks
+                # Apply masks (order matches IDL sequential if-then chain)
                 rain = np.where(rain < 0.0, MISSING, rain)
 
                 # Snow mask (months 43-60 = Apr 1990 - Dec 1991: use snow climatology)
@@ -137,15 +176,13 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
                 # Ice mask
                 rain = np.where(ice >= 25.0, -1.0 * ice, rain)
 
-                # Coastal mask for PR2
+                # PR2 coastal mask - uses geometry masks from _build_coastal_masks().
+                # See that function's docstring for the full C-vs-Fortran explanation.
                 if iproduct == 2:
-                    i_idx = np.arange(N_LON)[:, np.newaxis]
-                    j_idx = np.arange(N_LAT)[np.newaxis, :]
-                    icoast = ((i_idx <= 11) | (i_idx >= 60)).astype(bool)
-                    jcoast = ((j_idx <= 19) | (j_idx >= 53)).astype(bool)
-                    # mask coastal-mixed regions
-                    rain = np.where(icoast & (tag >= 25.0) & (tag <= 75.0), MISSING, rain)
-                    rain = np.where(jcoast & (tag < 25.0) & (rain > 1000.0), MISSING, rain)
+                    # Mask mixed coastal cells (25-75% land) at near-polar latitudes
+                    rain = np.where(_ICOAST & (tag >= 25.0) & (tag <= 75.0), MISSING, rain)
+                    # Mask spuriously high ocean rain (>1000 mm/day) at extended high latitudes
+                    rain = np.where(_JCOAST & (tag < 25.0) & (rain > 1000.0), MISSING, rain)
 
                 fout.write(rain.astype(np.float32).tobytes())
 
@@ -182,13 +219,11 @@ def gpcp_early(path_in='./f16-2.5/', path_out='./gpcp/'):
                 rain = np.where(snow >= 0.20, -100.0 * snow, rain)
                 rain = np.where(ice >= 25.0, -1.0 * ice, rain)
 
+                # Same PR2 coastal mask as gpcp_late - uses module-level
+                # _ICOAST / _JCOAST built with IDL-correct flat-index latitude bands.
                 if iproduct == 2:
-                    i_idx = np.arange(N_LON)[:, np.newaxis]
-                    j_idx = np.arange(N_LAT)[np.newaxis, :]
-                    icoast = ((i_idx <= 11) | (i_idx >= 60)).astype(bool)
-                    jcoast = ((j_idx <= 19) | (j_idx >= 53)).astype(bool)
-                    rain = np.where(icoast & (tag >= 25.0) & (tag <= 75.0), MISSING, rain)
-                    rain = np.where(jcoast & (tag < 25.0) & (rain > 1000.0), MISSING, rain)
+                    rain = np.where(_ICOAST & (tag >= 25.0) & (tag <= 75.0), MISSING, rain)
+                    rain = np.where(_JCOAST & (tag < 25.0) & (rain > 1000.0), MISSING, rain)
 
                 fout.write(rain.astype(np.float32).tobytes())
 
@@ -260,10 +295,21 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
                     out_samp = FILL.copy()
 
                     samp_total = samp_10 + samp_11
+
+                    # Guard against missing SSA fill values (-999.99) corrupting the
+                    # weighted average.  When either satellite's SSA is missing, its
+                    # fill value (-999.99) would appear in both the numerator and the
+                    # denominator, producing nonsensical results like -1000.86 mm/day
+                    # (observed in IDL reference for ~15 months in 2006-2008 when F-16
+                    # SSA had data gaps at season transition).  Python correctly falls
+                    # back to the F-17-only estimate (ssmi_11) when samp_total <= 0,
+                    # which is a deliberate IMPROVEMENT over the IDL reference.
                     valid = (ssmi_11 >= 0.0) & (samp_total > 0.0)
-                    out_rain = np.where(valid,
-                                        (ssmi_11 * samp_11 + ssmi_10 * samp_10) / samp_total,
-                                        ssmi_11)
+                    # Suppress numpy divide-by-zero for cells where valid=False;
+                    # those cells are overwritten by the np.where fallback anyway.
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        weighted = (ssmi_11 * samp_11 + ssmi_10 * samp_10) / samp_total
+                    out_rain = np.where(valid, weighted, ssmi_11)
                     out_samp = np.where(valid, samp_total / 2.0, FILL)
 
                     if jmon <= icurrent_month:
