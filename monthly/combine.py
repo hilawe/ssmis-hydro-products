@@ -31,6 +31,14 @@ NOTES
     - For 2.5-deg output: one full record per month row (N float32 per row,
       M rows per month) -> multi-year time-series.
     - For 1.0-deg output: single-year time-series (12 months × M rows × N cols).
+
+FUNCTIONS
+    combine_25deg_efficient - builds the 2.5° multi-year combined binary (used by main)
+    combine_10deg           - builds the per-year 1.0° combined binary (used by main)
+    main                    - CLI entry point called by run_ssmis.sh
+
+CALLED BY
+    run_ssmis.sh (via: python combine.py <sat> <start> <end> <month> [--res])
 """
 
 import sys
@@ -51,87 +59,17 @@ def get_dims(res):
         raise ValueError(f'Unsupported resolution {res}')
 
 
-def combine_25deg(sat, start_year, end_year, current_month):
-    """Combine all years into a single multi-year binary per product (2.5°)."""
-    M, N = get_dims(2.5)
-    path = f'{sat}-2.5/'
-    bad = np.full((N, M), MISSING, dtype=np.float32)  # GrADS: (N cols, M rows)
-    res_str = '2.5'
-
-    for prod in PRODUCTS:
-        out_file = os.path.join(path, f'{prod}-{sat}-{res_str}')
-        print(f'\nProcessing {out_file}')
-        rows_written = 0
-
-        with open(out_file, 'wb') as fout:
-            for yr in range(start_year, end_year + 1):
-                yr2 = f'{yr % 100:02d}'
-                for mo in range(1, 13):
-                    mm = f'{mo:02d}'
-                    in_file = os.path.join(path, f'{prod}{yr2}-{mm}-{sat}-{res_str}')
-
-                    if yr < end_year:
-                        # Previous years: skip (seek forward)
-                        rows_written += M
-                        fout.seek(rows_written * N * 4)
-                    elif yr == end_year and mo < current_month:
-                        # Current year, previous months: read existing file
-                        if os.path.exists(in_file):
-                            print(f'  Appending from {in_file}')
-                            data = np.fromfile(in_file, dtype=np.float32)
-                            if data.size == N * M:
-                                # data is (N, M) in Fortran column-major layout
-                                # Write M rows of N values each
-                                for k in range(M):
-                                    row = data[k * N:(k + 1) * N]
-                                    fout.write(row.tobytes())
-                                rows_written += M
-                            else:
-                                print(f'  Warning: unexpected size for {in_file}')
-                                for k in range(M):
-                                    fout.write(bad[:, k].tobytes())
-                                rows_written += M
-                        else:
-                            print(f'  Missing {in_file}, filling with -999.99')
-                            for k in range(M):
-                                fout.write(bad[:, k].tobytes())
-                            rows_written += M
-                    elif yr == end_year and mo <= current_month:
-                        # Current month
-                        if os.path.exists(in_file):
-                            print(f'  Appending current month from {in_file}')
-                            data = np.fromfile(in_file, dtype=np.float32)
-                            if data.size == N * M:
-                                for k in range(M):
-                                    fout.write(data[k * N:(k + 1) * N].tobytes())
-                                rows_written += M
-                            else:
-                                for k in range(M):
-                                    fout.write(bad[:, k].tobytes())
-                                rows_written += M
-                        else:
-                            print(f'  Missing {in_file}, filling with -999.99')
-                            for k in range(M):
-                                fout.write(bad[:, k].tobytes())
-                            rows_written += M
-                    else:
-                        # Future months
-                        print(f'  Filling future month {mm} with -999.99')
-                        for k in range(M):
-                            fout.write(bad[:, k].tobytes())
-                        rows_written += M
-
-        print(f'  Total rows written: {rows_written}')
-
-
-def combine_25deg_efficient(sat, start_year, end_year, current_month):
+def combine_25deg_efficient(sat, start_year, end_year, current_month, basedir='.'):
     """
     Efficient version: rebuild the combined file by reading/copying/filling
     month-by-month. The output format is: for each month, M rows of N float32.
     Previous-year records are copied if existing, else re-filled.
+
+    basedir : root directory under which {sat}-2.5/ subdirectory is found.
+              Allows test runs to point at a non-standard output directory.
     """
     M, N = get_dims(2.5)
-    path = f'{sat}-2.5/'
+    path = os.path.join(basedir, f'{sat}-2.5/')
     bad_row = np.full(N, MISSING, dtype=np.float32)
     res_str = '2.5'
 
@@ -178,14 +116,16 @@ def combine_25deg_efficient(sat, start_year, end_year, current_month):
                             fout.write(bad_row.tobytes())
 
 
-def combine_10deg(sat, start_year, end_year, yy):
+def combine_10deg(sat, start_year, end_year, yy, basedir='.'):
     """
     Build per-year combined 1.0-degree binary (single year, all 12 months).
     Output filename: <sat>-1.0/<PROD>.<YY>-<sat>-1.0
     Each month = one record of N*M float32.
+
+    basedir : root directory under which {sat}-1.0/ subdirectory is found.
     """
     M, N = get_dims(1.0)
-    path = f'{sat}-1.0/'
+    path = os.path.join(basedir, f'{sat}-1.0/')
     bad = np.full(N * M, MISSING, dtype=np.float32)
     os.makedirs(path, exist_ok=True)
 
@@ -223,19 +163,25 @@ def main():
     parser.add_argument('start_year',  type=int, help='Start year of record')
     parser.add_argument('end_year',    type=int, help='Current (end) year')
     parser.add_argument('month_or_yy', help='Current month (MM) for 2.5° or YY for 1.0°')
-    parser.add_argument('--res', type=float, default=2.5,
+    parser.add_argument('--res',       type=float, default=2.5,
                         choices=[2.5, 1.0], help='Resolution (default 2.5)')
+    # Optional path override - allows combine to operate in a test directory that
+    # mirrors the structure of monthly/ without touching the real product files.
+    parser.add_argument('--basedir',   default='.',
+                        help='Root directory containing {sat}-{res}/ subdirectories (default: .)')
     args = parser.parse_args()
 
     if args.res == 2.5:
         current_month = int(args.month_or_yy)
         print(f'Combining 2.5° for {args.sat}, {args.start_year}-{args.end_year}, '
-              f'through month {current_month:02d}')
-        combine_25deg_efficient(args.sat, args.start_year, args.end_year, current_month)
+              f'through month {current_month:02d}  basedir={args.basedir}')
+        combine_25deg_efficient(args.sat, args.start_year, args.end_year, current_month,
+                                basedir=args.basedir)
     else:
         yy = args.month_or_yy.zfill(2)
-        print(f'Combining 1.0° for {args.sat}, {args.start_year}-{args.end_year}, yy={yy}')
-        combine_10deg(args.sat, args.start_year, args.end_year, yy)
+        print(f'Combining 1.0° for {args.sat}, {args.start_year}-{args.end_year}, '
+              f'yy={yy}  basedir={args.basedir}')
+        combine_10deg(args.sat, args.start_year, args.end_year, yy, basedir=args.basedir)
 
 
 if __name__ == '__main__':
