@@ -5,8 +5,8 @@ generate_netcdf.py
 PURPOSE
     Converts SSMIS binary product files to NetCDF-CF format.
     Replaces: generate_netcdf.sh + all IDL .pro files in netcdf/:
-      - products_late_twohalfdeg_netcdf.pro
-      - products_early_twohalfdeg_netcdf.pro
+      - products_late_twohalfdeg_netcdf.pro   (late constellation: F08/F11/F13/F17 - 6pm ascending)
+      - products_early_twohalfdeg_netcdf.pro  (early constellation: F10/F14/F15/F16 - morning ascending)
       - products_early_onedeg_netcdf.pro
       - gpcp_late_netcdf.pro
       - gpcp_early_netcdf.pro
@@ -14,9 +14,39 @@ PURPOSE
       - products_pentad_netcdf.pro
 
 SYNOPSIS
-    python generate_netcdf.py [--dataset late25|early25|early10|gpcplate|gcpcparly|dual|pentad]
+    python generate_netcdf.py [--dataset late25|early25|early10|gpcplate|gpcpearly|dual|pentad]
 
     With no arguments: runs all enabled datasets (same as generate_netcdf.sh default).
+
+CONSTELLATION TERMINOLOGY - IMPORTANT
+    "Late" constellation  = satellites with ~6pm local ascending equatorial crossing time.
+                            Historical chain: F-08 -> F-11 -> F-13 -> F-17 (current); future: WSF-M.
+                            Source directory: ../25deg-bin/ (currently fed by f17-2.5/ products).
+                            Output filename suffix: _late_
+
+    "Early" constellation = satellites with ~morning local ascending equatorial crossing time.
+                            Historical chain: F-10 -> F-14 -> F-15 -> F-16 (current).
+                            Source directory: ../f10-bin/ (currently fed by f16-2.5/ products).
+                            Output filename suffix: _early_
+
+    KNOWN HISTORICAL BUG IN IDL PIPELINE (discovered 2026-04-16):
+    The operational IDL scripts products_late_twohalfdeg_netcdf.pro and
+    products_early_twohalfdeg_netcdf.pro had these labels SWAPPED - the IDL "late" script
+    processed f10-bin (F16/early constellation data) and the IDL "early" script processed
+    25deg-bin (F17/late constellation data).  All v01 NetCDF files published to NCEI and
+    distributed to customers therefore carry inverted constellation labels.
+
+    This Python implementation corrects the inversion. The corrected files are still
+    labeled v01 for now; a v02 re-publication under corrected filenames is planned once
+    coordination with NCEI/downstream users is completed. See the project documentation
+    Section 5.4 for full details.
+
+    GPCP CDR products (run_gpcp_late_netcdf / run_gpcp_early_netcdf) were NEVER affected
+    by this bug - gpcp_processing.py correctly labeled F17 as late and F16 as early from
+    the start, and this file's GPCP functions match that convention.
+
+CALLED BY
+    run_ssmis.sh (via cd $hydroMONTHLY_NETCDF && python3 generate_netcdf.py)
 
 NOTES
     - Binary input files are GrADS format: (N_LAT, N_LON) float32 per month,
@@ -65,7 +95,7 @@ CF_STANDARD = {
     'WVP': ('total_precipitable_water',  'mm',       'Monthly mean total precipitable water'),
 }
 
-TITLES_25_LATE = {
+PRODUCT_TITLES_25 = {
     'CFR': 'GPCP Monthly 2.5 Degree Mean Cloud Fraction (0-1.0)',
     'LWP': 'GPCP Monthly 2.5 Degree Mean Liquid Water Path (1000*mm)',
     'PF1': 'GPCP Monthly 2.5 Degree Mean Rain Fraction Algorithm #1 (0-1.0)',
@@ -211,7 +241,7 @@ def write_netcdf(ncfile, data_2d, lats, lons, year, month,
 
         prod_var = nc.createVariable(var_name, 'f4', ('time', 'lat', 'lon'),
                                      fill_value=FILL_VALUE)
-        prod_var.long_name = TITLES_25_LATE.get(prod_key, description)
+        prod_var.long_name = PRODUCT_TITLES_25.get(prod_key, description)
         prod_var.units = units
         prod_var.valid_min = np.float32(0.0)
         prod_var.Note = description
@@ -271,7 +301,7 @@ def process_dataset(input_files, output_prefix, grid, initial_year, products,
             write_netcdf(
                 ncfile, data_lat_lon, lats, lons, year, month,
                 prod_key,
-                title=f'{title_prefix} {TITLES_25_LATE.get(prod_key, prod_key)}',
+                title=f'{title_prefix} {PRODUCT_TITLES_25.get(prod_key, prod_key)}',
                 initial_year=initial_year,
                 constellation=constellation,
                 history=history,
@@ -281,34 +311,41 @@ def process_dataset(input_files, output_prefix, grid, initial_year, products,
 
 
 def run_late_25deg(out_dir='2.5-deg/'):
-    """Late constellation (f10-bin) 2.5° monthly products."""
-    path_in = '../f10-bin/'
-    initial_year = 1992
-    input_files = {
-        'CFR': os.path.join(path_in, 'CFR.F10'),
-        'LWP': os.path.join(path_in, 'LWP.F10'),
-        'PF1': os.path.join(path_in, 'PF1.F10'),
-        'PF2': os.path.join(path_in, 'PF2.F10'),
-        'PR1': os.path.join(path_in, 'PR1.F10'),
-        'PR2': os.path.join(path_in, 'PR2.F10'),
-        'SSA': os.path.join(path_in, 'SSA.F10'),
-        'ICE': os.path.join(path_in, 'ICE.F10'),
-        'SNW': os.path.join(path_in, 'SNW.F10'),
-        'WVP': os.path.join(path_in, 'WVP.F10'),
-    }
+    """
+    Late-constellation (6pm ascending equatorial crossing) 2.5° monthly products.
+
+    Source directory: ../25deg-bin/  (populated by run_ssmis.sh from f17-2.5/).
+    Satellite chain: SSM/I F-08 (Jul 1987) -> F-11 -> F-13 -> SSMIS F-17 (current).
+    All satellites in this chain cross the equator on the ascending node at ~6pm local time.
+
+    Replaces: products_early_twohalfdeg_netcdf.pro (IDL) - NOTE: the IDL script was
+    misnamed "early" but contained the late (6pm) constellation data.  The Python
+    implementation uses the scientifically correct name.  See module docstring for details.
+
+    CALLED BY: main() via --dataset late25 or 'all'
+    CALLS: write_netcdf(), make_coords(), get_n_months(), read_month()
+    """
+    # ../25deg-bin/ is populated each month by run_ssmis.sh:
+    #   cp f17-2.5/{CFR,LWP,...}-f17-2.5  25deg-bin/{CFR,LWP,...}.MON
+    # It accumulates the full multi-year late-constellation record
+    # (originally F08, then F11, F13, and currently F17).
+    path_in = '../25deg-bin/'
+    initial_year = 1987   # F-08 data begins July 1987
+    input_files = {p: os.path.join(path_in, f'{p}.MON') for p in PRODUCT_NAMES}
+
+    # Satellite chain for the late (6pm ascending) equatorial crossing constellation.
+    # F-08: July 1987 - December 1991
+    # F-11: January 1992 - April 1995
+    # F-13: May 1995 - December 2008
+    # F-17: January 2009 - present  (future: WSF-M will continue this series)
     constellation = (
-        'SSM/I F-10: January 1992-September 1997; '
-        'SSM/I F-14: October 1997-December 2001; '
-        'SSM/I F-15: January 2002-June 2006; '
-        'SSMIS F-16: July 2006-present'
+        'SSM/I F-08: July 1987-December 1991; '
+        'SSM/I F-11: January 1992-April 1995; '
+        'SSM/I F-13: May 1995-December 2008; '
+        'SSMIS F-17: January 2009-present'
     )
     title_prefix = 'SSMI-SSMIS Hydrological 2.5 Degree Gridded Monthly Products (late constellation)'
-    history = (
-        '1) 2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file converted '
-        'from the original gridded binary format '
-        '2) On October 18, 2017, netCDF files were revised due to a file encoding error '
-        '(dates were incorrectly encoded).'
-    )
+    history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file.'
     summary = f'NOAA STAR-EESIC-NCDC SSMI-SSMIS Hydrological Products from {initial_year}-present.'
 
     for prod_key in PRODUCT_NAMES:
@@ -333,28 +370,69 @@ def run_late_25deg(out_dir='2.5-deg/'):
             ncfile = os.path.join(out_dir, f'{out_prefix}{year:04d}{mm}.nc')
             os.makedirs(out_dir, exist_ok=True)
             write_netcdf(ncfile, data, lats, lons, year, month, prod_key,
-                         title=TITLES_25_LATE.get(prod_key, prod_key),
+                         title=PRODUCT_TITLES_25.get(prod_key, prod_key),
                          initial_year=initial_year, constellation=constellation,
                          history=history, summary=summary,
                          dataset_name=os.path.basename(bin_file))
 
 
 def run_early_25deg(out_dir='2.5-deg/'):
-    """Early constellation (25deg-bin) 2.5° monthly products."""
-    path_in = '../25deg-bin/'
-    initial_year = 1987
-    files = {p: os.path.join(path_in, f'{p}.MON') for p in PRODUCT_NAMES}
+    """
+    Early-constellation (morning ascending equatorial crossing) 2.5° monthly products.
+
+    Source directory: ../f10-bin/  (populated by run_ssmis.sh from f16-2.5/).
+    Satellite chain: SSM/I F-10 (Jan 1992) -> F-14 -> F-15 -> SSMIS F-16 (current).
+    All satellites in this chain cross the equator on the ascending node in the morning.
+    The directory is named "f10-bin" after the first satellite in this chain (F-10).
+
+    Replaces: products_late_twohalfdeg_netcdf.pro (IDL) - NOTE: the IDL script was
+    misnamed "late" but contained the early (morning) constellation data.  The Python
+    implementation uses the scientifically correct name.  See module docstring for details.
+
+    CALLED BY: main() via --dataset early25 or 'all'
+    CALLS: write_netcdf(), make_coords(), get_n_months(), read_month()
+    """
+    # ../f10-bin/ is populated each month by run_ssmis.sh:
+    #   cp f16-2.5/{CFR,LWP,...}-f16-2.5  f10-bin/{CFR,LWP,...}.F10
+    # It accumulates the full multi-year early-constellation record
+    # (originally F10, then F14, F15, and currently F16).
+    path_in = '../f10-bin/'
+    initial_year = 1992   # F-10 data begins January 1992
+    input_files = {
+        'CFR': os.path.join(path_in, 'CFR.F10'),
+        'LWP': os.path.join(path_in, 'LWP.F10'),
+        'PF1': os.path.join(path_in, 'PF1.F10'),
+        'PF2': os.path.join(path_in, 'PF2.F10'),
+        'PR1': os.path.join(path_in, 'PR1.F10'),
+        'PR2': os.path.join(path_in, 'PR2.F10'),
+        'SSA': os.path.join(path_in, 'SSA.F10'),
+        'ICE': os.path.join(path_in, 'ICE.F10'),
+        'SNW': os.path.join(path_in, 'SNW.F10'),
+        'WVP': os.path.join(path_in, 'WVP.F10'),
+    }
+
+    # Satellite chain for the early (morning ascending) equatorial crossing constellation.
+    # F-10: January 1992 - September 1997
+    # F-14: October 1997 - December 2001
+    # F-15: January 2002 - June 2006
+    # F-16: July 2006 - present
     constellation = (
-        'SSM/I F-08: July 1987-December 1991; '
         'SSM/I F-10: January 1992-September 1997; '
-        'SSMIS F-17: present'
+        'SSM/I F-14: October 1997-December 2001; '
+        'SSM/I F-15: January 2002-June 2006; '
+        'SSMIS F-16: July 2006-present'
     )
     title_prefix = 'SSMI-SSMIS Hydrological 2.5 Degree Gridded Monthly Products (early constellation)'
-    history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file.'
+    history = (
+        '1) 2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file converted '
+        'from the original gridded binary format. '
+        '2) On October 18, 2017, netCDF files were revised due to a file encoding error '
+        '(dates were incorrectly encoded).'
+    )
     summary = f'NOAA STAR-EESIC-NCDC SSMI-SSMIS Hydrological Products from {initial_year}-present.'
 
     for prod_key in PRODUCT_NAMES:
-        bin_file = files.get(prod_key)
+        bin_file = input_files.get(prod_key)
         if not bin_file or not os.path.exists(bin_file):
             continue
         out_prefix = f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_early_'
@@ -512,19 +590,25 @@ def main():
     print('=== NetCDF-CF Generation ===')
 
     if ds in ('late25', 'all'):
-        print('\n--- Late constellation 2.5° (products_late_twohalfdeg_netcdf) ---')
+        # Late constellation: 6pm ascending node chain (F08 -> F11 -> F13 -> F17), reads 25deg-bin/
+        # NOTE: previously misnamed "early" in IDL products_early_twohalfdeg_netcdf.pro
+        print('\n--- Late constellation 2.5° (corrected from IDL products_early_twohalfdeg_netcdf) ---')
         run_late_25deg()
 
     if ds in ('early25', 'all'):
-        print('\n--- Early constellation 2.5° (products_early_twohalfdeg_netcdf) ---')
+        # Early constellation: morning ascending node chain (F10 -> F14 -> F15 -> F16), reads f10-bin/
+        # NOTE: previously misnamed "late" in IDL products_late_twohalfdeg_netcdf.pro
+        print('\n--- Early constellation 2.5° (corrected from IDL products_late_twohalfdeg_netcdf) ---')
         run_early_25deg()
 
     if ds in ('gpcplate', 'all'):
-        print('\n--- GPCP late (gpcp_late_netcdf) ---')
+        # GPCP late: F17 (6pm ascending) - was correctly labeled in IDL and Python
+        print('\n--- GPCP late constellation (gpcp_late_netcdf, F17) ---')
         run_gpcp_late_netcdf()
 
     if ds in ('gpcpearly', 'all'):
-        print('\n--- GPCP early (gpcp_early_netcdf) ---')
+        # GPCP early: F16 (morning ascending) - was correctly labeled in IDL and Python
+        print('\n--- GPCP early constellation (gpcp_early_netcdf, F16) ---')
         run_gpcp_early_netcdf()
 
     if ds in ('dual', 'all'):

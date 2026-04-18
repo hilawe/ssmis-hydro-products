@@ -42,6 +42,9 @@ NCOL = 1080      # input 1/3-degree columns
 NROW = 540       # input 1/3-degree rows
 NT = 13          # number of accumulator channels
 
+# Default input path for gridded TDR files (1/3-degree binary, ascending/descending half-passes).
+# Override at runtime with --inpath command-line argument to support test runs in non-standard
+# working directories without modifying source code.
 INPATH = '../SSMIS_Grid/'
 
 # Channel names (0-indexed): TV19,TH19,TV22,TV37,TH37,TV85,TH85
@@ -387,13 +390,28 @@ def mean_lwp(rrmon, M, N, NT, iflg):
     z = np.full((M, N), -999.99, dtype=np.float32)
     ocean_dom = (cf_freq > 0) & (ratio <= 0.05)
     if iflg == 1:
+        # LWP: mean cloud liquid water path in g/m² (stored as 1000×mm).
+        # Fortran MEANLWP: Z = 1000*Y(5)/Y(6)  - lwp_sum / cloud_obs_count
         z = np.where(ocean_dom, 1000.0 * cf_acc / cf_freq, z)
     elif iflg == 2:
-        z = np.where(ocean_dom & (tpix > 0), cf_freq / tpix, z)
+        # CFR: cloud fraction = cloud_obs / ocean_pixels.
+        # Fortran MEANLWP: Z = Y(6)/Y(NT)  where Y(NT) = ocean pixels, NOT total pixels.
+        # BUG FIX: was cf_freq / tpix (total pixels); corrected to cf_freq / oce_pix.
+        z = np.where(ocean_dom & (oce_pix > 0), cf_freq / oce_pix, z)
 
-    # Remove sea-ice
+    # Remove sea-ice pixels: zero out ocean-dominated, cloud-observed cells where sea-ice > 10%.
+    # Fortran MEANLWP:
+    #   IF(Y(6).GT.0) Z = Y(6)/Y(NT)      ! only set Z valid when cloud obs exist
+    #   IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) THEN
+    #     IF(SEAICE.GT.10.0) Z=0.0         ! only zeroes cells that already had a valid Z
+    # BUG FIX 1: previously lacked RATIO <= 0.05 and RATIO > -1.0 guards - caused
+    #   ~1462 spurious CFR=0.0 values in land-adjacent cells.
+    # BUG FIX 2: must also require cf_freq > 0 (i.e., ocean_dom) so that cells with
+    #   Z=-999.99 (no cloud obs) are NOT converted to 0.0 by ice masking - those 654
+    #   cells have oce_pix>0 and are ocean-dominated but have zero cloud observations;
+    #   Fortran leaves them as -999.99, but without this guard Python sets them to 0.0.
     ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
-    z = np.where((oce_pix > 0) & (ice_frac > 10.0), 0.0, z)
+    z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
 
     return to_grads(z, M, N)
 
@@ -412,8 +430,14 @@ def mean_wvp(rrmon, M, N, NT):
     ocean_dom = (wvp_freq > 0) & (ratio <= 0.05)
     z = np.where(ocean_dom, wvp_acc / wvp_freq, z)
 
+    # Remove sea-ice pixels: same Fortran condition as MEANLWP -
+    # IF(Y(8).GT.0) Z = Y(7)/Y(8)          ! only valid where wvp observations exist
+    # IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) IF(SEAICE.GT.10) Z=0
+    # BUG FIX 1: previously lacked RATIO <= 0.05 guard - caused spurious WVP zeros.
+    # BUG FIX 2: must also require ocean_dom (wvp_freq > 0) so cells with Z=-999.99
+    #   (no wvp obs but ocean present) are not spuriously set to 0.0 by ice masking.
     ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
-    z = np.where((oce_pix > 0) & (ice_frac > 10.0), 0.0, z)
+    z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
 
     return to_grads(z, M, N)
 
@@ -693,8 +717,25 @@ def write_monthly(rrmon, outpath, sat, year_str, mm_str, M, N, NT, ndays):
         write_grads(fname, xp)
 
 
-def run(sat, yyyy, jday_start, jday_end, res=2.5):
-    """Main processing loop."""
+def run(sat, yyyy, jday_start, jday_end, res=2.5, outdir=None, inpath=None, coeff_dir=None):
+    """
+    Main processing loop.
+
+    Parameters
+    ----------
+    sat        : satellite name string (e.g. 'f17')
+    yyyy       : four-digit year integer
+    jday_start : start Julian day (1-based day-of-year)
+    jday_end   : end Julian day (inclusive)
+    res        : output grid resolution in degrees (2.5 or 1.0)
+    outdir     : directory under which {sat}-{res}/ output subdirectory is created.
+                 Defaults to '.' (current working directory), giving '{sat}-{res}/'.
+                 Pass e.g. 'test_mar2026' to write to 'test_mar2026/{sat}-{res}/'.
+    inpath     : path to the 1/3-degree gridded TDR input files.
+                 Defaults to INPATH module constant ('../SSMIS_Grid/').
+    coeff_dir  : directory containing lut_add_ocean, lut_add_land, lut_add_si, NLNDSEA.TAG.
+                 Defaults to '.' (current working directory).
+    """
     if res == 2.5:
         M, N, SIZE = 72, 144, 2.5
     elif res == 1.0:
@@ -702,20 +743,38 @@ def run(sat, yyyy, jday_start, jday_end, res=2.5):
     else:
         raise ValueError(f'Unsupported resolution {res}')
 
+    # Resolve optional path overrides - allows test runs in non-standard directories
+    # without hard-coded path assumptions in the source code.
+    _inpath    = inpath    if inpath    is not None else INPATH
+    _coeff_dir = coeff_dir if coeff_dir is not None else '.'
+    _tag_file  = os.path.join(_coeff_dir, 'NLNDSEA.TAG')
+
     year_str = f'{yyyy:04d}'
-    outpath = f'{sat}-{res:.1f}/'
+    # Build the output path: if outdir is given, create {outdir}/{sat}-{res:.1f}/;
+    # otherwise default to {sat}-{res:.1f}/ in the current working directory.
+    if outdir is not None:
+        outpath = os.path.join(outdir, f'{sat}-{res:.1f}/')
+    else:
+        outpath = f'{sat}-{res:.1f}/'
     os.makedirs(outpath, exist_ok=True)
 
     print(f'climalg_ssmis: sat={sat}, year={yyyy}, jdays={jday_start}-{jday_end}, res={res}°')
+    print(f'  inpath={_inpath}  coeff={_coeff_dir}  outpath={outpath}')
 
-    # Load auxiliary data
-    add_oce, add_lnd, add_si = load_luts('.')
-    tag_2d = load_land_tag('NLNDSEA.TAG')
+    # Load auxiliary data (LUTs and land/sea tag) from the coefficient directory
+    add_oce, add_lnd, add_si = load_luts(_coeff_dir)
+    tag_2d = load_land_tag(_tag_file)
 
-    # Build output bin maps
+    # Build output bin maps.
+    # Use 1-indexed rows/cols - INT((I)*RES/SIZE) where I=1..NROW - to match the Fortran
+    # climalg-ssmis-2.5deg.f / climalg-ssmis-1.0deg.f formula:
+    #   II = INT(I*RES/SIZE) + 1  (Fortran 1-indexed)
+    # which in 0-indexed Python is: floor((row+1)*RES/SIZE).
+    # Using 0-indexed (np.arange(NROW) * RES/SIZE) shifts bin boundaries:
+    #   at 1.0°: 33% of rows go to wrong bin; at 2.5°: 13% of rows.
     RES = 360.0 / NCOL
-    ii_map = np.minimum((np.arange(NROW) * RES / SIZE).astype(int), M - 1)  # lat bin per row
-    jj_map = np.minimum((np.arange(NCOL) * RES / SIZE).astype(int), N - 1)  # lon bin per col
+    ii_map = np.minimum(((np.arange(NROW) + 1) * RES / SIZE).astype(int), M - 1)  # lat bin per row
+    jj_map = np.minimum(((np.arange(NCOL) + 1) * RES / SIZE).astype(int), N - 1)  # lon bin per col
 
     # Build month boundary lookup (Julian days since Jan 1)
     def julday_offset(m, yyyy):
@@ -756,7 +815,8 @@ def run(sat, yyyy, jday_start, jday_end, res=2.5):
 
         for prefix in ('as', 'ds'):
             fname = f'{prefix}{year_str[2:4]}{jday_str}.{sat}'
-            fpath = os.path.join(INPATH, fname)
+            # Use the resolved _inpath (may be overridden via --inpath argument)
+            fpath = os.path.join(_inpath, fname)
             if os.path.exists(fpath):
                 print(f'  Processing {fname}')
                 ok = process_file(fpath, tag_2d, add_oce, add_lnd, add_si,
@@ -787,10 +847,19 @@ def main():
     parser.add_argument('yyyy',       type=int, help='Year (e.g. 2012)')
     parser.add_argument('jday_start', type=int, help='Start Julian day (e.g. 001)')
     parser.add_argument('jday_end',   type=int, help='End Julian day (e.g. 031)')
-    parser.add_argument('--res', type=float, default=2.5,
+    parser.add_argument('--res',      type=float, default=2.5,
                         choices=[2.5, 1.0], help='Output resolution in degrees (default: 2.5)')
+    # Optional path overrides - primarily for test/validation runs where the working
+    # directory is not the standard monthly/ directory.
+    parser.add_argument('--outdir',   default=None,
+                        help='Parent directory for {sat}-{res}/ output (default: current dir)')
+    parser.add_argument('--inpath',   default=None,
+                        help='Path to 1/3-degree TDR input files (default: ../SSMIS_Grid/)')
+    parser.add_argument('--coeff',    default=None,
+                        help='Directory containing LUT and NLNDSEA.TAG files (default: .)')
     args = parser.parse_args()
-    run(args.sat, args.yyyy, args.jday_start, args.jday_end, args.res)
+    run(args.sat, args.yyyy, args.jday_start, args.jday_end, args.res,
+        outdir=args.outdir, inpath=args.inpath, coeff_dir=args.coeff)
 
 
 if __name__ == '__main__':

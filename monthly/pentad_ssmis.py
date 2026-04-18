@@ -166,19 +166,35 @@ def process_file_pentad(fpath, tag_2d, add_oce, add_lnd, add_si,
     return True
 
 
-def run(sat, yyyy, jday_start, jday_end):
+def run(sat, yyyy, jday_start, jday_end, outdir=None, inpath=None, coeff_dir=None):
+    """
+    Run pentad (5-day) averaging for the given satellite and year.
+
+    outdir    : parent directory for {sat}-2.5/ output (default: current working dir)
+    inpath    : path to the 1/3-degree TDR input files (default: ../SSMIS_Grid/)
+    coeff_dir : directory containing LUT and NLNDSEA.TAG files (default: .)
+    """
     year_str = f'{yyyy:04d}'
-    outpath = f'{sat}-2.5/'
+    _inpath    = inpath    if inpath    is not None else INPATH
+    _coeff_dir = coeff_dir if coeff_dir is not None else '.'
+
+    if outdir is not None:
+        outpath = os.path.join(outdir, f'{sat}-2.5/')
+    else:
+        outpath = f'{sat}-2.5/'
     os.makedirs(outpath, exist_ok=True)
 
     print(f'pentad_ssmis: sat={sat}, year={yyyy}, jdays=1-{jday_end}')
+    print(f'  inpath={_inpath}  coeff={_coeff_dir}  outpath={outpath}')
 
-    add_oce, add_lnd, add_si = load_luts('.')
-    tag_2d = load_land_tag('NLNDSEA.TAG')
+    add_oce, add_lnd, add_si = load_luts(_coeff_dir)
+    tag_2d = load_land_tag(os.path.join(_coeff_dir, 'NLNDSEA.TAG'))
 
+    # 1-indexed binning to match Fortran INT(I*RES/SIZE)+1 convention;
+    # see the same fix in climalg_ssmis.py for detailed explanation.
     RES = 360.0 / NCOL
-    ii_map = np.minimum((np.arange(NROW) * RES / SIZE).astype(int), M - 1)
-    jj_map = np.minimum((np.arange(NCOL) * RES / SIZE).astype(int), N - 1)
+    ii_map = np.minimum(((np.arange(NROW) + 1) * RES / SIZE).astype(int), M - 1)
+    jj_map = np.minimum(((np.arange(NCOL) + 1) * RES / SIZE).astype(int), N - 1)
 
     ipen = build_pentad_boundaries(yyyy)
     print(f'Pentad boundaries: {ipen}')
@@ -196,7 +212,7 @@ def run(sat, yyyy, jday_start, jday_end):
 
         for prefix in ('as', 'ds'):
             fname = f'{prefix}{year_str[2:4]}{jday_str}.{sat}'
-            fpath = os.path.join(INPATH, fname)
+            fpath = os.path.join(_inpath, fname)
             if os.path.exists(fpath):
                 print(f'  Processing {fname}')
                 ok = process_file_pentad(fpath, tag_2d, add_oce, add_lnd, add_si,
@@ -245,8 +261,17 @@ def main():
     parser.add_argument('yyyy',       type=int)
     parser.add_argument('jday_start', type=int)
     parser.add_argument('jday_end',   type=int)
+    # Optional path overrides - mirrors the same arguments in climalg_ssmis.py
+    # to support validation test runs in non-standard directories.
+    parser.add_argument('--outdir',   default=None,
+                        help='Parent directory for {sat}-2.5/ output (default: .)')
+    parser.add_argument('--inpath',   default=None,
+                        help='Path to 1/3-degree TDR input files (default: ../SSMIS_Grid/)')
+    parser.add_argument('--coeff',    default=None,
+                        help='Directory with LUT and NLNDSEA.TAG files (default: .)')
     args = parser.parse_args()
-    run(args.sat, args.yyyy, args.jday_start, args.jday_end)
+    run(args.sat, args.yyyy, args.jday_start, args.jday_end,
+        outdir=args.outdir, inpath=args.inpath, coeff_dir=args.coeff)
 
 
 if __name__ == '__main__':
