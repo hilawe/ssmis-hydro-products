@@ -87,8 +87,9 @@ NOTES
         SNW: no scaling (stored as fraction 0-1)
     - Lat range for global products: -50° to 50° (matching 'set lat -50 50' in GrADS)
     - Snow uses NPS/SPS polar stereographic projections, matching 'set mproj nps/sps'
-    - Snow anomaly (panels 2 and 4) is 100×(current − 1987-2010 baseline mean)
-      computed directly from the combined multi-year SNW binary, replicating:
+    - Snow anomaly (panels 2 and 4) is 100×(current − 1991-2020 baseline mean),
+      following the WMO Climate Normals standard period (updated May 2021).
+      Computed directly from the combined multi-year SNW binary, replicating:
         GrADS: define meanval = ave(maskout(sn,sn), t=startmon, t=endmon, 1yr)
                define percent = 100*(current - meanval)
     - Title spacing: matplotlib constrained_layout + fig.suptitle() are used for
@@ -114,6 +115,15 @@ MODIFICATION HISTORY
                              (5) Snow image upgraded to true 4-panel layout (snow_4.gs):
                              NH snow | NH anomaly (top), SH snow | SH anomaly (bottom);
                              anomaly computed from 1987-2010 baseline of combined binary.
+    2026-04-18  H. Semunegus  BASELINE UPGRADE: Snow anomaly reference period updated from
+                             1987-2010 to 1991-2020, conforming to the WMO Climate Normals
+                             standard period (WMO-No. 1203, updated May 2021). This aligns
+                             the SSMI/SSMIS anomaly fields with ERA5, GPCP v3, IMERG and
+                             all major modern climate datasets. F-18 baseline coverage
+                             improves from 1 year (March 2010 only) to 10 years (2010-2020),
+                             making F-18 snow anomalies scientifically meaningful for the
+                             first time. All baseline_start/baseline_end defaults, docstrings,
+                             labels, and annotation strings updated throughout.
                              (6) Added NaN-aware smooth_field() (Gaussian sigma) helper -
                              retained for optional use but rendering reverted to contourf
                              after visual comparison showed contourf better matches the
@@ -613,16 +623,29 @@ def smooth_field(data, sigma=SMOOTH_SIGMA):
 
 
 def _compute_snow_climatology(indir, sat, cal_month_0based,
-                               baseline_start=1987, baseline_end=2010):
+                               baseline_start=1991, baseline_end=2020):
     """
-    Compute the 1987-2010 monthly snow-cover climatology for a given satellite
-    and calendar month, reading directly from the combined multi-year binary.
+    Compute the WMO 1991-2020 monthly snow-cover climatology for a given
+    satellite and calendar month, reading directly from the combined multi-year
+    binary.
+
+    The baseline period 1991-2020 is the current WMO Climate Normals standard
+    period (WMO-No. 1203, adopted May 2021), replacing the previous 1987-2010
+    default.  This aligns SSMI/SSMIS snow anomaly fields with ERA5, GPCP v3,
+    IMERG, and the broader climate monitoring community.
 
     Replicates the GrADS snow_4.gs definition:
       'define meanval = ave(maskout(sn, sn), t=startmon, t=endmon, 1yr)'
-    where 't=startmon' and 't=endmon' bound the 1987-2010 period for the
+    where 't=startmon' and 't=endmon' bound the 1991-2020 period for the
     target calendar month, and '1yr' tells GrADS to stride by 12 months
     (i.e., accumulate only the matching calendar month from each year).
+
+    Satellite-specific baseline coverage with the WMO 1991-2020 period:
+      F-17 (late chain): record starts 1987, baseline covers 1991-2020 = 30 yr
+      F-16 (early chain): record starts 1992, baseline covers 1992-2020 = 29 yr
+      F-18: record starts 2010, baseline covers 2010-2020 = 11 yr (up from 1 yr
+            under the old 1987-2010 baseline, making F-18 anomalies scientifically
+            useful for the first time)
 
     Parameters
     ----------
@@ -634,9 +657,9 @@ def _compute_snow_climatology(indir, sat, cal_month_0based,
     cal_month_0based : int
         Calendar month index 0-based (0=Jan, 1=Feb, 2=Mar, ..., 11=Dec).
     baseline_start : int
-        First year of the climatological baseline period (default 1987).
+        First year of the WMO climatological baseline period (default 1991).
     baseline_end : int
-        Last year of the climatological baseline period (default 2010).
+        Last year of the WMO climatological baseline period (default 2020).
 
     Returns
     -------
@@ -938,7 +961,7 @@ def plot_global(data, product_var, header_title,
 # Polar stereographic 4-panel map (SNW)
 # Replicates the complete snow_4.gs layout:
 #   Panel NW (top-left):  Northern Hemisphere snow cover  (NPS, 30-90°N)
-#   Panel NE (top-right): NH anomaly (100×departure from 1987-2010 baseline)
+#   Panel NE (top-right): NH anomaly (100×departure from 1991-2020 WMO baseline)
 #   Panel SW (bot-left):  Southern Hemisphere snow cover  (SPS, 30-90°S)
 #   Panel SE (bot-right): SH anomaly
 #
@@ -970,7 +993,7 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
     data_full : ndarray (N_LAT, N_LON)
         Current month's global snow fraction field (0-1).
     clim_full : ndarray (N_LAT, N_LON) or None
-        1987-2010 baseline climatological mean snow fraction.
+        1991-2020 WMO baseline climatological mean snow fraction.
         If None, anomaly panels show a placeholder message.
     header_title : str
         Figure suptitle (e.g., 'SSM/I Snow Cover for Mar 2026').
@@ -1316,8 +1339,11 @@ def gen_snw(sat, yy, mm, outdir, indir):
     fpath_25 = os.path.join(indir, f'{sat}-2.5', f'SNW{yy}-{mm}-{sat}-2.5')
     data_25  = read_grads_binary(fpath_25)   # (72, 144) float32 or None
 
+    # WMO Climate Normals standard period 1991-2020 (WMO-No. 1203, May 2021).
+    # Baseline defaults are now 1991/2020 in _compute_snow_climatology();
+    # explicit args retained here for clarity and to allow override if needed.
     clim_25  = _compute_snow_climatology(indir, sat, mon_idx,
-                                         baseline_start=1987, baseline_end=2010)
+                                         baseline_start=1991, baseline_end=2020)
 
     if data_25 is not None and clim_25 is not None:
         # Anomaly = 100 × (current − mean).  NaN where either field is NaN
@@ -1334,7 +1360,7 @@ def gen_snw(sat, yy, mm, outdir, indir):
         data, anom, header_title,
         SNW_CMAP,  SNW_LEVELS,
         ANOM_CMAP, ANOM_LEVELS,
-        'monthly snow cover fraction', '% departure from 1987-2010 mean',
+        'monthly snow cover fraction', '% departure from 1991-2020 mean (WMO)',
         outpath,
         snw_lons=snw_lons, snw_lats=snw_lats,
         anom_lons=LONS, anom_lats=LATS    # anomaly always 2.5°
