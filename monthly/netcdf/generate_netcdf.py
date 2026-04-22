@@ -14,7 +14,7 @@ PURPOSE
       - products_pentad_netcdf.pro
 
 SYNOPSIS
-    python generate_netcdf.py [--dataset late25|early25|early10|gpcplate|gpcpearly|dual|pentad]
+    python generate_netcdf.py [--dataset late25|early25|late10|gpcplate|gpcpearly|dual|all]
 
     With no arguments: runs all enabled datasets (same as generate_netcdf.sh default).
 
@@ -106,6 +106,21 @@ PRODUCT_TITLES_25 = {
     'ICE': 'GPCP Monthly 2.5 Degree Mean Sea-Ice Cover (0-100%)',
     'SNW': 'GPCP Monthly 2.5 Degree Mean Snow Cover Fraction (0-1.0)',
     'WVP': 'GPCP Monthly 2.5 Degree Mean Total Precipitable Water (mm)',
+}
+
+# 1.0-degree products.  PF2 and PR2 are not produced at 1.0-degree resolution -
+# the 1.0-deg algorithm outputs only these 8 variables.
+PRODUCT_NAMES_10 = ['CFR', 'LWP', 'PF1', 'PR1', 'SSA', 'ICE', 'SNW', 'WVP']
+
+PRODUCT_TITLES_10 = {
+    'CFR': 'NCDC Monthly 1.0 Degree Mean Cloud Fraction (0-1.0)',
+    'LWP': 'NCDC Monthly 1.0 Degree Mean Liquid Water Path (1000*mm)',
+    'PF1': 'NCDC Monthly 1.0 Degree Mean Rain Fraction Algorithm #1 (0-1.0)',
+    'PR1': 'NCDC Monthly 1.0 Degree Mean Rainfall (mm) Algorithm #1',
+    'SSA': 'NCDC Monthly 1.0 Degree Mean Sampling Fraction (0-1.0)',
+    'ICE': 'NCDC Monthly 1.0 Degree Mean Sea-Ice Cover (0-100%)',
+    'SNW': 'NCDC Monthly 1.0 Degree Mean Snow Cover Fraction (0-1.0)',
+    'WVP': 'NCDC Monthly 1.0 Degree Mean Total Precipitable Water (mm)',
 }
 
 
@@ -579,10 +594,164 @@ def run_gpcp_dual_netcdf(out_dir='2.5-deg/'):
                          dataset_name=os.path.basename(bin_file))
 
 
+def run_late_1deg(out_dir='1.0-deg/'):
+    """
+    Late-constellation (6pm ascending equatorial crossing) 1.0° monthly products.
+
+    Source directory: ../ncdc-bin/  (populated by run_ssmis.sh from f17-1.0/).
+    Satellite chain: SSM/I F-08 (Jul 1987) -> F-11 -> F-13 -> SSMIS F-17 (current).
+    All satellites in this chain cross the equator on the ascending node at ~6pm local time.
+
+    Binary file layout in ncdc-bin/:
+        Filename pattern: {PROD}.{YY}  where YY is a 2-digit calendar year suffix.
+        Year disambiguation:  YY 87-99 -> 1987-1999;  YY 00-86 -> 2000-2086.
+        Each annual file holds exactly 12 consecutive months of data:
+            360 (nlon) × 180 (nlat) × 4 bytes (float32) × 12 months = 3,110,400 bytes.
+        Months are in chronological order (January first).
+
+    Products available at 1.0-degree resolution (8 total - PF2 and PR2 are NOT produced
+    by the 1.0-degree algorithm and are therefore absent from ncdc-bin/):
+        CFR, LWP, PF1, PR1, SSA, ICE, SNW, WVP
+
+    Replaces: products_early_onedeg_netcdf.pro (IDL).
+    IMPORTANT HISTORICAL NOTE: That IDL script was MISNAMED "early" but processed data
+    from ncdc-bin/ which is the late-constellation (F-08 -> F-11 -> F-13 -> F-17) record.  This
+    Python implementation corrects the label to "late" - consistent with the 2.5-deg
+    correction documented in the project documentation
+
+    The IDL NetCDF files produced before November 2012 (when production was halted) also
+    contained an incorrect date encoding bug.  The Python write_netcdf() function
+    computes dates correctly, so that error is automatically corrected here.
+
+    Output NetCDF files written to out_dir (default: 1.0-deg/ relative to this script):
+        mw-hydro_v01_1.0-deg_{prod}_late_{YYYY}{MM}.nc
+    for every month and product where the source binary is present and non-missing.
+
+    CALLED BY: main() via --dataset late10 or 'all'
+    CALLS: write_netcdf(), make_coords(), read_month()
+    """
+    path_in = '../ncdc-bin/'
+    initial_year = 1987   # SSM/I F-08 data begins July 1987
+
+    constellation = (
+        'SSM/I F-08: July 1987-December 1991; '
+        'SSM/I F-11: January 1992-April 1995; '
+        'SSM/I F-13: May 1995-December 2008; '
+        'SSMIS F-17: January 2009-present'
+    )
+    title_prefix = (
+        'SSMI-SSMIS Hydrological 1.0 Degree Gridded Monthly Products '
+        '(late constellation)'
+    )
+    history = (
+        '1) 2012-07-01, Hilawe Semunegus, NOAA/NCDC, created netCDF file converted '
+        'from the original 1.0-degree gridded binary format. '
+        '2) 2026-04-22, Hilawe Semunegus, NOAA/NCEI, restarted production under Python '
+        'pipeline; corrected constellation label from erroneous "early" (IDL script '
+        'products_early_onedeg_netcdf.pro) to correct "late"; corrected date encoding.'
+    )
+    summary = (
+        f'NOAA STAR-EESIC-NCDC SSMI-SSMIS Hydrological 1.0-Degree Products '
+        f'from {initial_year}-present.'
+    )
+
+    os.makedirs(out_dir, exist_ok=True)
+    lats, lons = make_coords(GRID_10)
+
+    # -----------------------------------------------------------------------
+    # Build a chronologically sorted list of (calendar_year, yy_string) pairs
+    # from the files actually present in ncdc-bin/.  The reference product is
+    # CFR - if CFR.{YY} exists, the full set of product files for that year
+    # should also be present (they are written together by run_ssmis.sh).
+    # 2-digit year rule: 87-99 -> 1987-1999; 00-86 -> 2000-2086.
+    # -----------------------------------------------------------------------
+    available_years = []
+    if not os.path.isdir(path_in):
+        print(f'  ERROR: ncdc-bin/ not found at {path_in} - aborting 1.0-deg NetCDF generation')
+        return
+
+    for entry in sorted(os.listdir(path_in)):
+        if not entry.startswith('CFR.'):
+            continue
+        yy_str = entry.split('.', 1)[1]          # e.g. '87', '99', '00', '26'
+        if not yy_str.isdigit() or len(yy_str) != 2:
+            continue
+        yy_int = int(yy_str)
+        cal_year = (1900 + yy_int) if yy_int >= 87 else (2000 + yy_int)
+        available_years.append((cal_year, yy_str))
+
+    available_years.sort(key=lambda t: t[0])     # chronological order
+
+    if not available_years:
+        print('  No annual binary files found in ncdc-bin/ - nothing to convert')
+        return
+
+    print(f'  Found {len(available_years)} year-files in ncdc-bin/ '
+          f'({available_years[0][0]}-{available_years[-1][0]})')
+
+    # -----------------------------------------------------------------------
+    # Main loop: for each available year, open each product's annual binary
+    # file, read all 12 months, and write individual per-month NetCDF files.
+    # -----------------------------------------------------------------------
+    for cal_year, yy_str in available_years:
+
+        # Read all 12 months for each available product into memory for this year.
+        # Storing as a dict of lists avoids re-opening files per month.
+        year_data = {}   # product_key -> list of 12 (nlat, nlon) float32 arrays
+
+        for prod_key in PRODUCT_NAMES_10:
+            bin_file = os.path.join(path_in, f'{prod_key}.{yy_str}')
+            if not os.path.exists(bin_file):
+                continue
+            with open(bin_file, 'rb') as fobj:
+                months_list = []
+                for _ in range(12):
+                    arr = read_month(fobj, GRID_10)
+                    months_list.append(arr)          # None if file truncated
+            year_data[prod_key] = months_list
+
+        if not year_data:
+            print(f'  {cal_year}: no product files found in ncdc-bin/, skipping')
+            continue
+
+        # Write one NetCDF file per (month, product) - skip all-missing months.
+        written = 0
+        for month_idx in range(12):
+            month = month_idx + 1    # 1-based calendar month number
+            mm    = f'{month:02d}'
+
+            for prod_key, months_list in year_data.items():
+                data_2d = months_list[month_idx]
+                if data_2d is None:
+                    continue
+                # Skip months where every grid cell is missing (fill = -999.99).
+                # This is common for Jan-Jun 1987 (F-08 launched Jul 1987).
+                if np.all(data_2d <= -999.0):
+                    continue
+
+                ncfile = os.path.join(
+                    out_dir,
+                    f'mw-hydro_v01_1.0-deg_{prod_key.lower()}_late_{cal_year:04d}{mm}.nc'
+                )
+                write_netcdf(
+                    ncfile, data_2d, lats, lons, cal_year, month,
+                    prod_key,
+                    title=f'{title_prefix} - {PRODUCT_TITLES_10.get(prod_key, prod_key)}',
+                    initial_year=initial_year,
+                    constellation=constellation,
+                    history=history,
+                    summary=summary,
+                    dataset_name=f'{prod_key}.{yy_str}',
+                )
+                written += 1
+
+        print(f'  {cal_year}: {written} NetCDF files written')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generate NetCDF-CF files from SSMIS binary products')
     parser.add_argument('--dataset', choices=[
-        'late25', 'early25', 'gpcplate', 'gpcpearly', 'dual', 'all'
+        'late25', 'early25', 'late10', 'gpcplate', 'gpcpearly', 'dual', 'all'
     ], default='all', help='Which dataset to convert (default: all)')
     args = parser.parse_args()
 
@@ -600,6 +769,14 @@ def main():
         # NOTE: previously misnamed "late" in IDL products_late_twohalfdeg_netcdf.pro
         print('\n--- Early constellation 2.5° (corrected from IDL products_late_twohalfdeg_netcdf) ---')
         run_early_25deg()
+
+    if ds in ('late10', 'all'):
+        # Late constellation 1.0-degree products from ncdc-bin/ (F08 -> F11 -> F13 -> F17).
+        # Replaces IDL products_early_onedeg_netcdf.pro (misnamed "early"; corrected here).
+        # Production was halted in Nov 2012 due to NetCDF date encoding errors; restarted
+        # under Python pipeline 2026-04-22 with correct date encoding and label.
+        print('\n--- Late constellation 1.0° (restarted; replaces IDL products_early_onedeg_netcdf) ---')
+        run_late_1deg()
 
     if ds in ('gpcplate', 'all'):
         # GPCP late: F17 (6pm ascending) - was correctly labeled in IDL and Python
