@@ -770,17 +770,18 @@ def main():
         print('\n--- Early constellation 2.5° (corrected from IDL products_late_twohalfdeg_netcdf) ---')
         run_early_25deg()
 
-    if ds == 'late10':
+    if ds in ('late10', 'all'):
         # Late constellation 1.0-degree products from ncdc-bin/ (F08 -> F11 -> F13 -> F17).
         # Replaces IDL products_early_onedeg_netcdf.pro (misnamed "early"; corrected here).
         # Production was halted in Nov 2012 due to NetCDF date encoding errors; restarted
         # under Python pipeline 2026-04-22 with correct date encoding and label.
         #
-        # NOTE: deliberately excluded from 'all' (the default monthly run via run_ssmis.sh)
-        # until 1.0-deg is configured for NCEI ingest and archive.  Run manually with:
-        #     python3 generate_netcdf.py --dataset late10
+        # Files are generated into netcdf/1.0-deg/ each monthly run but are NOT tarred
+        # or transferred to NCEI ingest - tar_mw-hydro_netcdf.sh and transfer_netcdf.sh
+        # only loop over '2.5-deg', 'gpcp-input', and 'imagery', so 1.0-deg is
+        # automatically excluded from archive until activated for v02.
         # See the project documentation for the v02 activation plan.
-        print('\n--- Late constellation 1.0° (restarted; replaces IDL products_early_onedeg_netcdf) ---')
+        print('\n--- Late constellation 1.0° (replaces IDL products_early_onedeg_netcdf) ---')
         run_late_1deg()
 
     if ds in ('gpcplate', 'all'):
