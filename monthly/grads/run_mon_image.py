@@ -370,13 +370,29 @@ def build_cmap(interval_ccols, over_ccol):
 #             'set ccols 0 22 31 32 34 43 45 47 54 56 59'
 # ---------------------------------------------------------------------------
 
-# PR1: 16 clevs -> 15 intervals + 1 overflow = 16 ccols
-#   ccols[0..14] -> intervals 1-2, 2-3, ..., 22-24 mm/day
-#   ccols[15] = 29 -> overflow (>24 mm/day)
+# PR1: 16 clevs -> 1 below-minimum + 15 intervals, GrADS uses last ccol as overflow
+# GrADS pr1.gs ccols (16 total for 16 clevs):
+#   ccols[0]  = 53 -> below 1 mm/day  (land and zero-rain ocean - lavender purple)
+#   ccols[1]  = 55 -> 1-2 mm/day
+#   ccols[2]  = 4 -> 2-3 mm/day
+#   ccols[3]  = 11 -> 3-4 mm/day
+#   ccols[4]  = 5 -> 4-5 mm/day
+#   ccols[5]  = 13 -> 5-6 mm/day
+#   ccols[6]  = 3 -> 6-7 mm/day
+#   ccols[7]  = 38 -> 7-8 mm/day
+#   ccols[8]  = 10 -> 8-10 mm/day
+#   ccols[9]  = 7 -> 10-12 mm/day
+#   ccols[10] = 12 -> 12-14 mm/day
+#   ccols[11] = 8 -> 14-16 mm/day
+#   ccols[12] = 2 -> 16-18 mm/day
+#   ccols[13] = 27 -> 18-20 mm/day
+#   ccols[14] = 6 -> 20-22 mm/day
+#   ccols[15] = 29 -> 22-24 mm/day and overflow >24 mm/day
 PR1_LEVELS  = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 20, 22, 24]
-PR1_CCOLS   = [53, 55, 4, 11, 5, 13, 3, 38, 10, 7, 12, 8, 2, 27, 6]  # 15 interval colors
+PR1_CCOLS   = [55, 4, 11, 5, 13, 3, 38, 10, 7, 12, 8, 2, 27, 6, 29]  # 15 interval colors
 PR1_OVER    = 29
 PR1_CMAP    = build_cmap(PR1_CCOLS, PR1_OVER)
+PR1_CMAP.set_under(_rgb_f(53))  # lavender-purple (GrADS color 53) for land and < 1 mm/day
 
 # LWP: 10 clevs -> 9 intervals + 1 overflow = 10 ccols (+1 under = 11 total)
 #   ccols[0] = 0 (white) -> below 0.05 kg/m²
