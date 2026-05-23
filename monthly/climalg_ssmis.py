@@ -316,16 +316,14 @@ def cloud(ta, tb, is_ocean, sice):
 def vapor(ta, tb, is_ocean, sice, add_si):
     """
     Total precipitable water (Alishouse).
-    Uses TB for the retrieval, TA for the scattering index check.
+    Uses Tb for both the retrieval and the SCT rain-screen.
     Returns: wvp (...) in mm, -999.99 where invalid
     """
     ch_valid = ((ta[..., 0] != 102.0) & (ta[..., 2] != 102.0) &
                 (ta[..., 3] != 102.0) & (ta[..., 5] != 102.0))
     tv19_b, _, tv22_b, tv37_b, _, tv85_b, _ = (tb[..., i] for i in range(7))
-    tv19_a, _, tv22_a, _, _, tv85_a, _ = (ta[..., i] for i in range(7))
 
-    # Scattering index (using TA)
-    sct = -182.7 + 0.75*tv19_a + 2.543*tv22_a - 0.00543*tv22_a*tv22_a - tv85_a
+    sct = -182.7 + 0.75*tv19_b + 2.543*tv22_b - 0.00543*tv22_b*tv22_b - tv85_b
 
     no_ice = sice != 100.0
     ocean_only = is_ocean & no_ice & (sct <= 10.0) & ch_valid
