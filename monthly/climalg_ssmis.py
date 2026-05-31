@@ -344,128 +344,144 @@ def mean_precip(rrmon, M, N, NT, ndays, iflg, ichan):
     Compute monthly mean precipitation field.
     rrmon: (M, N, NT) accumulator array
     Returns xp: (N, M) float32 in GrADS output layout
+
+    The np.errstate context suppresses divide-by-zero / invalid warnings
+    that NumPy emits when np.where(cond, x/y, fill) is evaluated: both
+    branches of np.where are computed before masking, so x/y is briefly
+    evaluated even where cond=False (and y may be 0 there). The result
+    is then masked out by np.where, so the output is correct. Matches
+    the pattern used in gpcp_processing.py:331 and run_mon_image.py:634.
     """
-    SNOWT = 99.0
-    iyoff = 0 if ichan == 8 else 2  # channel offset (85GHz=0, 37GHz=2)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        SNOWT = 99.0
+        iyoff = 0 if ichan == 8 else 2  # channel offset (85GHz=0, 37GHz=2)
 
-    land_pix = rrmon[:, :, NT-2]  # index 11 (NT-2): total land pixels
-    oce_pix  = rrmon[:, :, NT-1]  # index 12 (NT-1): total ocean pixels
-    tpix = land_pix + oce_pix
-    ratio = np.where(tpix > 0, land_pix / tpix, -1.0)
+        land_pix = rrmon[:, :, NT-2]  # index 11 (NT-2): total land pixels
+        oce_pix  = rrmon[:, :, NT-1]  # index 12 (NT-1): total ocean pixels
+        tpix = land_pix + oce_pix
+        ratio = np.where(tpix > 0, land_pix / tpix, -1.0)
 
-    acc  = rrmon[:, :, iyoff]      # rain accumulation
-    freq = rrmon[:, :, iyoff + 1]  # rain frequency
+        acc  = rrmon[:, :, iyoff]      # rain accumulation
+        freq = rrmon[:, :, iyoff + 1]  # rain frequency
 
-    z = np.full((M, N), -999.99, dtype=np.float32)
-    valid = tpix > 0
-    if iflg == 1:
-        z = np.where(valid, ndays * 24.0 * acc / tpix, z)
-    elif iflg == 2:
-        z = np.where(valid, freq / tpix, z)
+        z = np.full((M, N), -999.99, dtype=np.float32)
+        valid = tpix > 0
+        if iflg == 1:
+            z = np.where(valid, ndays * 24.0 * acc / tpix, z)
+        elif iflg == 2:
+            z = np.where(valid, freq / tpix, z)
 
-    # Remove sea-ice pixels (ocean-dominated, >10% ice)
-    ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
-    z = np.where((oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
+        # Remove sea-ice pixels (ocean-dominated, >10% ice)
+        ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
+        z = np.where((oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
 
-    if ichan == 8:
-        # Remove snow pixels (land-dominated, >99% snow)
-        snow_frac = np.where(land_pix > 0, 100.0 * rrmon[:, :, 8] / land_pix, 0.0)
-        z = np.where((land_pix > 0) & (ratio >= 0.95) & (snow_frac > SNOWT), 0.0, z)
+        if ichan == 8:
+            # Remove snow pixels (land-dominated, >99% snow)
+            snow_frac = np.where(land_pix > 0, 100.0 * rrmon[:, :, 8] / land_pix, 0.0)
+            z = np.where((land_pix > 0) & (ratio >= 0.95) & (snow_frac > SNOWT), 0.0, z)
 
-    return to_grads(z, M, N)
+        return to_grads(z, M, N)
 
 
 def mean_lwp(rrmon, M, N, NT, iflg):
-    """Cloud liquid water path or cloud fraction."""
-    land_pix = rrmon[:, :, NT-2]
-    oce_pix  = rrmon[:, :, NT-1]
-    tpix = land_pix + oce_pix
-    ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
+    """Cloud liquid water path or cloud fraction.
+    np.errstate context: see mean_precip docstring for rationale."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        land_pix = rrmon[:, :, NT-2]
+        oce_pix  = rrmon[:, :, NT-1]
+        tpix = land_pix + oce_pix
+        ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
 
-    cf_acc  = rrmon[:, :, 4]   # LWP accumulation
-    cf_freq = rrmon[:, :, 5]   # cloud frequency
+        cf_acc  = rrmon[:, :, 4]   # LWP accumulation
+        cf_freq = rrmon[:, :, 5]   # cloud frequency
 
-    z = np.full((M, N), -999.99, dtype=np.float32)
-    ocean_dom = (cf_freq > 0) & (ratio <= 0.05)
-    if iflg == 1:
-        # LWP: mean cloud liquid water path in g/m² (stored as 1000×mm).
-        # Fortran MEANLWP: Z = 1000*Y(5)/Y(6)  - lwp_sum / cloud_obs_count
-        z = np.where(ocean_dom, 1000.0 * cf_acc / cf_freq, z)
-    elif iflg == 2:
-        # CFR: cloud fraction = cloud_obs / ocean_pixels.
-        # Fortran MEANLWP: Z = Y(6)/Y(NT)  where Y(NT) = ocean pixels, NOT total pixels.
-        # BUG FIX: was cf_freq / tpix (total pixels); corrected to cf_freq / oce_pix.
-        z = np.where(ocean_dom & (oce_pix > 0), cf_freq / oce_pix, z)
+        z = np.full((M, N), -999.99, dtype=np.float32)
+        ocean_dom = (cf_freq > 0) & (ratio <= 0.05)
+        if iflg == 1:
+            # LWP: mean cloud liquid water path in g/m² (stored as 1000×mm).
+            # Fortran MEANLWP: Z = 1000*Y(5)/Y(6)  - lwp_sum / cloud_obs_count
+            z = np.where(ocean_dom, 1000.0 * cf_acc / cf_freq, z)
+        elif iflg == 2:
+            # CFR: cloud fraction = cloud_obs / ocean_pixels.
+            # Fortran MEANLWP: Z = Y(6)/Y(NT)  where Y(NT) = ocean pixels, NOT total pixels.
+            # BUG FIX: was cf_freq / tpix (total pixels); corrected to cf_freq / oce_pix.
+            z = np.where(ocean_dom & (oce_pix > 0), cf_freq / oce_pix, z)
 
-    # Remove sea-ice pixels: zero out ocean-dominated, cloud-observed cells where sea-ice > 10%.
-    # Fortran MEANLWP:
-    #   IF(Y(6).GT.0) Z = Y(6)/Y(NT)      ! only set Z valid when cloud obs exist
-    #   IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) THEN
-    #     IF(SEAICE.GT.10.0) Z=0.0         ! only zeroes cells that already had a valid Z
-    # BUG FIX 1: previously lacked RATIO <= 0.05 and RATIO > -1.0 guards - caused
-    #   ~1462 spurious CFR=0.0 values in land-adjacent cells.
-    # BUG FIX 2: must also require cf_freq > 0 (i.e., ocean_dom) so that cells with
-    #   Z=-999.99 (no cloud obs) are NOT converted to 0.0 by ice masking - those 654
-    #   cells have oce_pix>0 and are ocean-dominated but have zero cloud observations;
-    #   Fortran leaves them as -999.99, but without this guard Python sets them to 0.0.
-    ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
-    z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
+        # Remove sea-ice pixels: zero out ocean-dominated, cloud-observed cells where sea-ice > 10%.
+        # Fortran MEANLWP:
+        #   IF(Y(6).GT.0) Z = Y(6)/Y(NT)      ! only set Z valid when cloud obs exist
+        #   IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) THEN
+        #     IF(SEAICE.GT.10.0) Z=0.0         ! only zeroes cells that already had a valid Z
+        # BUG FIX 1: previously lacked RATIO <= 0.05 and RATIO > -1.0 guards - caused
+        #   ~1462 spurious CFR=0.0 values in land-adjacent cells.
+        # BUG FIX 2: must also require cf_freq > 0 (i.e., ocean_dom) so that cells with
+        #   Z=-999.99 (no cloud obs) are NOT converted to 0.0 by ice masking - those 654
+        #   cells have oce_pix>0 and are ocean-dominated but have zero cloud observations;
+        #   Fortran leaves them as -999.99, but without this guard Python sets them to 0.0.
+        ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
+        z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
 
-    return to_grads(z, M, N)
+        return to_grads(z, M, N)
 
 
 def mean_wvp(rrmon, M, N, NT):
-    """Total precipitable water."""
-    land_pix = rrmon[:, :, NT-2]
-    oce_pix  = rrmon[:, :, NT-1]
-    tpix = land_pix + oce_pix
-    ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
+    """Total precipitable water.
+    np.errstate context: see mean_precip docstring for rationale."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        land_pix = rrmon[:, :, NT-2]
+        oce_pix  = rrmon[:, :, NT-1]
+        tpix = land_pix + oce_pix
+        ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
 
-    wvp_acc  = rrmon[:, :, 6]
-    wvp_freq = rrmon[:, :, 7]
+        wvp_acc  = rrmon[:, :, 6]
+        wvp_freq = rrmon[:, :, 7]
 
-    z = np.full((M, N), -999.99, dtype=np.float32)
-    ocean_dom = (wvp_freq > 0) & (ratio <= 0.05)
-    z = np.where(ocean_dom, wvp_acc / wvp_freq, z)
+        z = np.full((M, N), -999.99, dtype=np.float32)
+        ocean_dom = (wvp_freq > 0) & (ratio <= 0.05)
+        z = np.where(ocean_dom, wvp_acc / wvp_freq, z)
 
-    # Remove sea-ice pixels: same Fortran condition as MEANLWP -
-    # IF(Y(8).GT.0) Z = Y(7)/Y(8)          ! only valid where wvp observations exist
-    # IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) IF(SEAICE.GT.10) Z=0
-    # BUG FIX 1: previously lacked RATIO <= 0.05 guard - caused spurious WVP zeros.
-    # BUG FIX 2: must also require ocean_dom (wvp_freq > 0) so cells with Z=-999.99
-    #   (no wvp obs but ocean present) are not spuriously set to 0.0 by ice masking.
-    ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
-    z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
+        # Remove sea-ice pixels: same Fortran condition as MEANLWP -
+        # IF(Y(8).GT.0) Z = Y(7)/Y(8)          ! only valid where wvp observations exist
+        # IF(Y(NT).GT.0.AND.RATIO.LE.0.05.AND.RATIO.GT.-1.0) IF(SEAICE.GT.10) Z=0
+        # BUG FIX 1: previously lacked RATIO <= 0.05 guard - caused spurious WVP zeros.
+        # BUG FIX 2: must also require ocean_dom (wvp_freq > 0) so cells with Z=-999.99
+        #   (no wvp obs but ocean present) are not spuriously set to 0.0 by ice masking.
+        ice_frac = np.where(oce_pix > 0, 100.0 * rrmon[:, :, 9] / oce_pix, 0.0)
+        z = np.where(ocean_dom & (oce_pix > 0) & (ratio > -1.0) & (ratio <= 0.05) & (ice_frac > 10.0), 0.0, z)
 
-    return to_grads(z, M, N)
+        return to_grads(z, M, N)
 
 
 def mean_snw(rrmon, M, N, NT):
-    """Snow cover fraction."""
-    land_pix = rrmon[:, :, NT-2]
-    oce_pix  = rrmon[:, :, NT-1]
-    tpix = land_pix + oce_pix
-    ratio = np.where(tpix > 0, land_pix / tpix, -1.0)
+    """Snow cover fraction.
+    np.errstate context: see mean_precip docstring for rationale."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        land_pix = rrmon[:, :, NT-2]
+        oce_pix  = rrmon[:, :, NT-1]
+        tpix = land_pix + oce_pix
+        ratio = np.where(tpix > 0, land_pix / tpix, -1.0)
 
-    z = np.full((M, N), -999.99, dtype=np.float32)
-    land_dom = (land_pix > 0) & (ratio >= 0.95)
-    z = np.where(land_dom, rrmon[:, :, 8] / land_pix, z)
+        z = np.full((M, N), -999.99, dtype=np.float32)
+        land_dom = (land_pix > 0) & (ratio >= 0.95)
+        z = np.where(land_dom, rrmon[:, :, 8] / land_pix, z)
 
-    return to_grads(z, M, N)
+        return to_grads(z, M, N)
 
 
 def mean_ice(rrmon, M, N, NT):
-    """Sea ice fraction."""
-    land_pix = rrmon[:, :, NT-2]
-    oce_pix  = rrmon[:, :, NT-1]
-    tpix = land_pix + oce_pix
-    ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
+    """Sea ice fraction.
+    np.errstate context: see mean_precip docstring for rationale."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        land_pix = rrmon[:, :, NT-2]
+        oce_pix  = rrmon[:, :, NT-1]
+        tpix = land_pix + oce_pix
+        ratio = np.where(tpix > 0, land_pix / tpix, 1.0)
 
-    z = np.full((M, N), -999.99, dtype=np.float32)
-    ocean_dom = (oce_pix > 0) & (ratio <= 0.05)
-    z = np.where(ocean_dom, 100.0 * rrmon[:, :, 9] / oce_pix, z)
+        z = np.full((M, N), -999.99, dtype=np.float32)
+        ocean_dom = (oce_pix > 0) & (ratio <= 0.05)
+        z = np.where(ocean_dom, 100.0 * rrmon[:, :, 9] / oce_pix, z)
 
-    return to_grads(z, M, N)
+        return to_grads(z, M, N)
 
 
 def mean_ssa(rrmon, M, N, NT):
