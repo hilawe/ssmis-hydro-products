@@ -49,7 +49,7 @@ OUTPUT
     Does NOT modify any operational files.
 
 AUTHOR
-    Hilawe Semunegus, NOAA/NCEI
+    H. Semunegus, NOAA/NCEI
     Validation date: 2026-04-17
 """
 

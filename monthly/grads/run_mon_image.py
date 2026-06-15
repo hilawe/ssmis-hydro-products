@@ -97,16 +97,16 @@ NOTES
       manual vertical offsets - spacing is automatic, not arbitrary.
 
 MODIFICATION HISTORY
-    2026-04-15  Hilawe Semunegus  Initial conversion from GrADS scripts
-    2026-04-15  Hilawe Semunegus  Fixed: color tables (exact RGB from gxX.c + cpccol.gs),
+    2026-04-15  H. Semunegus  Initial conversion from GrADS scripts
+    2026-04-15  H. Semunegus  Fixed: color tables (exact RGB from gxX.c + cpccol.gs),
                              filename convention (Mon{YY}-ra-25prod.gif capitalized),
                              WVP filename suffix (-ta- not -wv-), data scaling (PR1/ndays,
                              LWP/1000), lat range (-50 to 50), added --indir/--outdir args
-    2026-04-16  Hilawe Semunegus  Added --archive-dir: writes NCEI archive-named copies of f17
+    2026-04-16  H. Semunegus  Added --archive-dir: writes NCEI archive-named copies of f17
                              imagery (mw-hydro_v01_imagery_*_{YYYY}{MM}.gif + .ps for snow)
                              to netcdf/imagery/ so tar_mw-hydro_netcdf.sh can package them.
                              Fixed per-satellite subdirectory output (img/{sat}/).
-    2026-04-17  Hilawe Semunegus  (1) Replaced contourf with pcolormesh throughout - GrADS-style
+    2026-04-17  H. Semunegus  (1) Replaced contourf with pcolormesh throughout - GrADS-style
                              flat cell fill, no smoothing/interpolation between grid cells.
                              (2) Switched to constrained_layout + fig.suptitle() so title/
                              subtitle/map spacing is auto-computed with no blank gap.
@@ -128,7 +128,7 @@ MODIFICATION HISTORY
                              retained for optional use but rendering reverted to contourf
                              after visual comparison showed contourf better matches the
                              operational GrADS output appearance at 2.5° resolution.
-    2026-04-17  Hilawe Semunegus  (7) Removed satellite prefixes (SSM/I, SSMI/S) from all
+    2026-04-17  H. Semunegus  (7) Removed satellite prefixes (SSM/I, SSMI/S) from all
                              map titles - product will incorporate WSF-M data, making
                              per-sensor labels obsolete.
                              (8) Snow panels switched to 1.0° yearly combined binary
