@@ -152,6 +152,21 @@ import datetime
 import calendar
 import numpy as np
 
+# Point GDAL's PROJ at the conda environment's PROJ data directory before cartopy
+# (and its GDAL) are imported. The pipeline invokes python directly rather than via
+# conda activate, so GDAL_DATA/PROJ_DATA are unset and GDAL's PROJ context fails its
+# first database probe with "ERROR 1: PROJ: proj_create_from_database: Open of ...
+# failed" before silently falling back. pyproj resolves the correct, version-matched
+# directory; reuse it so the probe succeeds and the message is not emitted. Harmless
+# if pyproj is unavailable.
+try:
+    import pyproj as _pyproj
+    _proj_data_dir = _pyproj.datadir.get_data_dir()
+    os.environ.setdefault('PROJ_DATA', _proj_data_dir)
+    os.environ.setdefault('PROJ_LIB', _proj_data_dir)
+except Exception:
+    pass
+
 try:
     import matplotlib
     matplotlib.use('Agg')  # non-interactive backend (no X server needed)
