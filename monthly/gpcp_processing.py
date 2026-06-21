@@ -30,13 +30,18 @@ import numpy as np
 # constellation transitions from F-17 to WSF-M (or early from F-16 to F-18),
 # only satellite_config.py needs to change.
 try:
-    from satellite_config import late_start_year, early_start_year
+    from satellite_config import (late_start_year, early_start_year,
+                                  LATE_CONSTELLATION_SAT, EARLY_CONSTELLATION_SAT)
     _LATE_INIT_YEAR  = late_start_year()   # 1987 for F-17 record
     _EARLY_INIT_YEAR = early_start_year()  # 1992 for F-16 record
+    _LATE_SAT  = LATE_CONSTELLATION_SAT    # morning chain primary (e.g. 'f17')
+    _EARLY_SAT = EARLY_CONSTELLATION_SAT   # late-morning chain primary (e.g. 'f16')
 except Exception:
     # Fallback if satellite_config is not in path (e.g., test environments)
     _LATE_INIT_YEAR  = 1987
     _EARLY_INIT_YEAR = 1992
+    _LATE_SAT  = 'f17'
+    _EARLY_SAT = 'f16'
 
 N_LON = 144
 N_LAT = 72
@@ -135,17 +140,21 @@ def _build_coastal_masks():
 _ICOAST, _JCOAST = _build_coastal_masks()
 
 
-def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
+def gpcp_late(path_in=None, path_out='./gpcp/'):
     """
-    F-17 (late constellation) GPCP dataset.
+    Morning-chain (internal 'late' constellation) GPCP dataset, currently F-17.
     Applies snow/ice masking and writes gpcp_nesdis_pr1.dat / gpcp_nesdis_pr2.dat.
+    The primary satellite and its input directory come from
+    satellite_config.LATE_CONSTELLATION_SAT.
     """
+    if path_in is None:
+        path_in = f'./{_LATE_SAT}-2.5/'
     os.makedirs(path_out, exist_ok=True)
     n_months = _months_since(_LATE_INIT_YEAR)
-    print(f'gpcp_late (f17): processing {n_months} months from {_LATE_INIT_YEAR}')
+    print(f'gpcp_late ({_LATE_SAT}): processing {n_months} months from {_LATE_INIT_YEAR}')
 
-    snw_file = os.path.join(path_in, 'SNW-f17-2.5')
-    ice_file = os.path.join(path_in, 'ICE-f17-2.5')
+    snw_file = os.path.join(path_in, f'SNW-{_LATE_SAT}-2.5')
+    ice_file = os.path.join(path_in, f'ICE-{_LATE_SAT}-2.5')
     tag = read_lndsea()
 
     # Generate Julian date sequence starting Jan 1987
@@ -153,7 +162,7 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
     start = datetime.date(INIT_YEAR_F17, 1, 1)
 
     for iproduct in [1, 2]:
-        rain_file = os.path.join(path_in, f'PR{iproduct}-f17-2.5')
+        rain_file = os.path.join(path_in, f'PR{iproduct}-{_LATE_SAT}-2.5')
         out_name = os.path.join(path_out, f'gpcp_nesdis_pr{iproduct}.dat')
         print(f'  Writing {out_name}')
 
@@ -207,21 +216,25 @@ def gpcp_late(path_in='./f17-2.5/', path_out='./gpcp/'):
                 fout.write(rain.astype(np.float32).tobytes())
 
 
-def gpcp_early(path_in='./f16-2.5/', path_out='./gpcp/'):
+def gpcp_early(path_in=None, path_out='./gpcp/'):
     """
-    F-16 (early constellation) GPCP dataset.
-    Writes gpcp_nesdis_f10_pr1.dat / gpcp_nesdis_f10_pr2.dat.
+    Late-morning-chain (internal 'early' constellation) GPCP dataset, currently
+    F-16. Writes gpcp_nesdis_f10_pr1.dat / gpcp_nesdis_f10_pr2.dat. The primary
+    satellite and its input directory come from
+    satellite_config.EARLY_CONSTELLATION_SAT.
     """
+    if path_in is None:
+        path_in = f'./{_EARLY_SAT}-2.5/'
     os.makedirs(path_out, exist_ok=True)
     n_months = _months_since(_EARLY_INIT_YEAR)
-    print(f'gpcp_early (f16): processing {n_months} months from {_EARLY_INIT_YEAR}')
+    print(f'gpcp_early ({_EARLY_SAT}): processing {n_months} months from {_EARLY_INIT_YEAR}')
 
-    snw_file = os.path.join(path_in, 'SNW-f16-2.5')
-    ice_file = os.path.join(path_in, 'ICE-f16-2.5')
+    snw_file = os.path.join(path_in, f'SNW-{_EARLY_SAT}-2.5')
+    ice_file = os.path.join(path_in, f'ICE-{_EARLY_SAT}-2.5')
     tag = read_lndsea()
 
     for iproduct in [1, 2]:
-        rain_file = os.path.join(path_in, f'PR{iproduct}-f16-2.5')
+        rain_file = os.path.join(path_in, f'PR{iproduct}-{_EARLY_SAT}-2.5')
         out_name = os.path.join(path_out, f'gpcp_nesdis_f10_pr{iproduct}.dat')
         print(f'  Writing {out_name}')
 
@@ -248,13 +261,21 @@ def gpcp_early(path_in='./f16-2.5/', path_out='./gpcp/'):
                 fout.write(rain.astype(np.float32).tobytes())
 
 
-def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
+def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     """
-    Merge f17 and f16 GPCP estimates (dual-satellite product).
-    Writes gpcp_nesdis_dual_pr1.dat / gpcp_nesdis_dual_pr2.dat / gpcp_nesdis_dual_ssa.dat.
-    Also copies SSA files for GPCP archives.
+    Merge the morning-chain and late-morning-chain GPCP estimates (dual-satellite
+    product), currently F-17 and F-16. Writes gpcp_nesdis_dual_pr1.dat /
+    gpcp_nesdis_dual_pr2.dat / gpcp_nesdis_dual_ssa.dat. Also copies SSA files for
+    GPCP archives. The input directories come from satellite_config
+    (LATE_CONSTELLATION_SAT for the morning chain, EARLY_CONSTELLATION_SAT for the
+    late-morning chain). The path_f17/path_f16 parameter names are kept for
+    backward compatibility.
     """
     import shutil
+    if path_f17 is None:
+        path_f17 = f'./{_LATE_SAT}-2.5/'
+    if path_f16 is None:
+        path_f16 = f'./{_EARLY_SAT}-2.5/'
     os.makedirs(path_out, exist_ok=True)
 
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -269,8 +290,8 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
     # Copy SSA files - satellite suffix reflects current constellation primaries
     # (these names are fixed for GPCP archival compatibility; do not change)
     for src, dst in [
-        (os.path.join(path_f17, 'SSA-f17-2.5'), os.path.join(path_out, 'gpcp_nesdis_ssa.dat')),
-        (os.path.join(path_f16, 'SSA-f16-2.5'), os.path.join(path_out, 'gpcp_nesdis_f10_ssa.dat')),
+        (os.path.join(path_f17, f'SSA-{_LATE_SAT}-2.5'), os.path.join(path_out, 'gpcp_nesdis_ssa.dat')),
+        (os.path.join(path_f16, f'SSA-{_EARLY_SAT}-2.5'), os.path.join(path_out, 'gpcp_nesdis_f10_ssa.dat')),
     ]:
         if os.path.exists(src):
             shutil.copy2(src, dst)
@@ -280,9 +301,9 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
 
     for iproduct in [1, 2]:
         f17_pr = os.path.join(path_out, f'gpcp_nesdis_pr{iproduct}.dat')
-        f17_ssa = os.path.join(path_f17, 'SSA-f17-2.5')
+        f17_ssa = os.path.join(path_f17, f'SSA-{_LATE_SAT}-2.5')
         f16_pr = os.path.join(path_out, f'gpcp_nesdis_f10_pr{iproduct}.dat')
-        f16_ssa = os.path.join(path_f16, 'SSA-f16-2.5')
+        f16_ssa = os.path.join(path_f16, f'SSA-{_EARLY_SAT}-2.5')
 
         out_pr  = os.path.join(path_out, f'gpcp_nesdis_dual_pr{iproduct}.dat')
         out_ssa = os.path.join(path_out, 'gpcp_nesdis_dual_ssa.dat')

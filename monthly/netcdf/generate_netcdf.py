@@ -89,6 +89,12 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from product_version import PRODUCT_VERSION, PRODUCT_VERSION_ATTR
 
+# Constellation chain primaries and their metadata strings come from
+# satellite_config, so a satellite transition is a config change (see
+# the project documentation).
+from satellite_config import (get_constellation_history,
+                              LATE_CONSTELLATION_SAT, EARLY_CONSTELLATION_SAT)
+
 # ---------------------------------------------------------------------------
 # Grid definitions
 # ---------------------------------------------------------------------------
@@ -382,12 +388,8 @@ def run_early_25deg(out_dir='2.5-deg/'):
     # F-11: January 1992 - April 1995  (descending morning at ~06h)
     # F-13: May 1995 - December 2008   (descending morning at ~06h)
     # F-17: January 2009 - present     (descending morning at ~06h; future: WSF-M)
-    constellation = (
-        'SSM/I F-08: July 1987-December 1991; '
-        'SSM/I F-11: January 1992-April 1995; '
-        'SSM/I F-13: May 1995-December 2008; '
-        'SSMIS F-17: January 2009-present'
-    )
+    # Morning chain history (F-08 -> ... -> F-17 today) from satellite_config.
+    constellation = get_constellation_history(LATE_CONSTELLATION_SAT)
     title_prefix = 'SSMI-SSMIS Hydrological 2.5 Degree Gridded Monthly Products (early/morning constellation)'
     history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file.'
     summary = f'NOAA STAR-EESIC-NCDC SSMI-SSMIS Hydrological Products from {initial_year}-present.'
@@ -465,12 +467,8 @@ def run_late_25deg(out_dir='2.5-deg/'):
     # F-14: October 1997 - December 2001
     # F-15: January 2002 - June 2006
     # F-16: July 2006 - present
-    constellation = (
-        'SSM/I F-10: January 1992-September 1997; '
-        'SSM/I F-14: October 1997-December 2001; '
-        'SSM/I F-15: January 2002-June 2006; '
-        'SSMIS F-16: July 2006-present'
-    )
+    # Late-morning chain history (F-10 -> ... -> F-16 today) from satellite_config.
+    constellation = get_constellation_history(EARLY_CONSTELLATION_SAT)
     title_prefix = 'SSMI-SSMIS Hydrological 2.5 Degree Gridded Monthly Products (late/late-morning constellation)'
     history = (
         '1) 2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF file converted '
@@ -516,6 +514,8 @@ def run_gpcp_late_netcdf(out_dir='2.5-deg/'):
         'PR1': os.path.join(path_in, 'gpcp_nesdis_pr1.dat'),
         'PR2': os.path.join(path_in, 'gpcp_nesdis_pr2.dat'),
     }
+    # GPCP-specific short label (not the full chain history). Update the satellite
+    # token by hand at the WSF-M cutover; see the project documentation.
     constellation = 'SSMIS F-17: January 1987-present'
     title = 'GPCP Monthly 2.5 Degree Rainfall (mm)'
     history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
@@ -668,12 +668,8 @@ def run_early_1deg(out_dir='1.0-deg/'):
     path_in = '../ncdc-bin/'
     initial_year = 1987   # SSM/I F-08 data begins July 1987
 
-    constellation = (
-        'SSM/I F-08: July 1987-December 1991; '
-        'SSM/I F-11: January 1992-April 1995; '
-        'SSM/I F-13: May 1995-December 2008; '
-        'SSMIS F-17: January 2009-present'
-    )
+    # Morning chain history (same as the 2.5-degree early product) from satellite_config.
+    constellation = get_constellation_history(LATE_CONSTELLATION_SAT)
     title_prefix = (
         'SSMI-SSMIS Hydrological 1.0 Degree Gridded Monthly Products '
         '(early/morning constellation)'
