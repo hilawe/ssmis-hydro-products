@@ -194,7 +194,7 @@ def write_netcdf(ncfile, data_2d, lats, lons, year, month,
 
     data_2d: (nlat, nlon) float32 array
     """
-    now_str = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    now_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     var_name, units, description = CF_STANDARD[prod_key]
 
     with Dataset(ncfile, 'w', format='NETCDF4') as nc:

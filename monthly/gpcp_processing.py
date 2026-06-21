@@ -53,7 +53,7 @@ MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 
 
 def _current_year_month():
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     return now.year, now.month
 
 
@@ -257,7 +257,7 @@ def gpcp_dual(path_f17='./f17-2.5/', path_f16='./f16-2.5/', path_out='./gpcp/'):
     import shutil
     os.makedirs(path_out, exist_ok=True)
 
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     cy, cm = now.year, now.month
     increment_month = cm if cm != 0 else 12
 
