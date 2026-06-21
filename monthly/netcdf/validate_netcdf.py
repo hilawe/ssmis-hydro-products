@@ -293,7 +293,7 @@ def compare_nc_product(py_nc_path, idl_nc_path, prod_key, label):
 # ---------------------------------------------------------------------------
 
 def check_attributes(py_nc_path, expected_constellation_fragment,
-                     expected_product_version='v01r00'):
+                     expected_product_version=gn.PRODUCT_VERSION_ATTR):
     """
     Verify that key CF and NOAA CDR global attributes are present and correct
     in a Python-generated NetCDF file.
@@ -322,7 +322,7 @@ def check_attributes(py_nc_path, expected_constellation_fragment,
             'CF-1.5' in getattr(ds, 'Metadata_Conventions', ''),
             getattr(ds, 'Metadata_Conventions', 'MISSING'))
 
-        chk('product_version == v01r00',
+        chk(f'product_version == {expected_product_version}',
             getattr(ds, 'product_version', '') == expected_product_version,
             getattr(ds, 'product_version', 'MISSING'))
 
@@ -429,9 +429,9 @@ def validate_late_25deg():
         bin_file = os.path.join(Q1_LATE_BIN, f'{prod_key}.MON')
         # IDL reference for F17 data is the "early" labeled file (inversion!)
         idl_ref  = os.path.join(Q1_NC_25,
-                                f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_early_{VAL_YEAR:04d}{VAL_MM}.nc')
+                                f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_early_{VAL_YEAR:04d}{VAL_MM}.nc')
 
-        out_prefix = f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_late_'
+        out_prefix = f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_late_'
         out_dir    = os.path.join(TESTOUT_DIR, 'late25')
 
         py_nc = run_python_netcdf_for_product(
@@ -495,9 +495,9 @@ def validate_early_25deg():
         bin_file = os.path.join(Q1_EARLY_BIN, f'{prod_key}.{ext_map[prod_key]}')
         # IDL reference for F16 data is the "late" labeled file (inversion!)
         idl_ref  = os.path.join(Q1_NC_25,
-                                f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_late_{VAL_YEAR:04d}{VAL_MM}.nc')
+                                f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_late_{VAL_YEAR:04d}{VAL_MM}.nc')
 
-        out_prefix = f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_early_'
+        out_prefix = f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_early_'
         out_dir    = os.path.join(TESTOUT_DIR, 'early25')
 
         py_nc = run_python_netcdf_for_product(
@@ -562,7 +562,7 @@ def validate_gpcp():
                 'PR2': ('gpcp_nesdis_pr2.dat',    IMONTH_GPCP_LATE),
             },
             'constellation': 'SSMIS F-17: January 1987-present',
-            'out_prefix_tpl': 'mw-hydro_v01_gpcp_late_{prod}_',
+            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp_late_{prod}_',
             'out_subdir': 'gpcp_late',
             'initial_year': 1987,
         },
@@ -573,7 +573,7 @@ def validate_gpcp():
                 'PR2': ('gpcp_nesdis_f10_pr2.dat', IMONTH_GPCP_EARLY),
             },
             'constellation': 'SSMIS F-16: January 1992-present',
-            'out_prefix_tpl': 'mw-hydro_v01_gpcp_early_{prod}_',
+            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp_early_{prod}_',
             'out_subdir': 'gpcp_early',
             'initial_year': 1992,
         },

@@ -84,6 +84,11 @@ try:
 except ImportError:
     raise ImportError('netCDF4 package required: pip install netCDF4')
 
+# Single source of truth for the version token in output filenames and the
+# NetCDF product_version attribute (see monthly/product_version.py).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from product_version import PRODUCT_VERSION, PRODUCT_VERSION_ATTR
+
 # ---------------------------------------------------------------------------
 # Grid definitions
 # ---------------------------------------------------------------------------
@@ -206,7 +211,7 @@ def write_netcdf(ncfile, data_2d, lats, lons, year, month,
         nc.naming_authority = 'gov.noaa.ncdc'
         nc.metadata_link = 'gov.noaa.ncdc:C00790'
         nc.title = title
-        nc.product_version = 'v01r00'
+        nc.product_version = PRODUCT_VERSION_ATTR
         nc.date_issued = '2012-07-30'
         nc.summary = summary
         nc.keywords = ('ATMOSPHERE > CLOUDS > CLOUD AMOUNT/FREQUENCY, '
@@ -391,7 +396,7 @@ def run_early_25deg(out_dir='2.5-deg/'):
         bin_file = input_files.get(prod_key)
         if not bin_file or not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_early_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_early_'
         lats, lons = make_coords(GRID_25)
         n_months = get_n_months(bin_file, GRID_25)
 
@@ -479,7 +484,7 @@ def run_late_25deg(out_dir='2.5-deg/'):
         bin_file = input_files.get(prod_key)
         if not bin_file or not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_v01_2.5-deg_{prod_key.lower()}_late_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_late_'
         lats, lons = make_coords(GRID_25)
         n_months = get_n_months(bin_file, GRID_25)
 
@@ -520,7 +525,7 @@ def run_gpcp_late_netcdf(out_dir='2.5-deg/'):
     for prod_key, bin_file in gpcp_files.items():
         if not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_v01_gpcp_late_{prod_key.lower()}_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_late_{prod_key.lower()}_'
         n_months = get_n_months(bin_file, GRID_25)
 
         for imonth in range(n_months):
@@ -560,7 +565,7 @@ def run_gpcp_early_netcdf(out_dir='2.5-deg/'):
     for prod_key, bin_file in gpcp_files.items():
         if not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_v01_gpcp_early_{prod_key.lower()}_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_early_{prod_key.lower()}_'
         n_months = get_n_months(bin_file, GRID_25)
 
         for imonth in range(n_months):
@@ -600,7 +605,7 @@ def run_gpcp_dual_netcdf(out_dir='2.5-deg/'):
     for prod_key, bin_file in gpcp_files.items():
         if not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_v01_gpcp_dual_{prod_key.lower()}_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_dual_{prod_key.lower()}_'
         n_months = get_n_months(bin_file, GRID_25)
 
         for imonth in range(n_months):
@@ -763,7 +768,7 @@ def run_early_1deg(out_dir='1.0-deg/'):
 
                 ncfile = os.path.join(
                     out_dir,
-                    f'mw-hydro_v01_1.0-deg_{prod_key.lower()}_early_{cal_year:04d}{mm}.nc'
+                    f'mw-hydro_{PRODUCT_VERSION}_1.0-deg_{prod_key.lower()}_early_{cal_year:04d}{mm}.nc'
                 )
                 write_netcdf(
                     ncfile, data_2d, lats, lons, cal_year, month,

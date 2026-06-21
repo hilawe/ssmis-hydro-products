@@ -195,6 +195,12 @@ except ImportError:
 
 import warnings
 
+# Single source of truth for the version token in imagery filenames
+# (see monthly/product_version.py). Kept dependency-free so importing it
+# does not pull netCDF4 into the imagery path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from product_version import PRODUCT_VERSION
+
 
 # ---------------------------------------------------------------------------
 # 2.5-degree grid definition
@@ -815,13 +821,13 @@ def write_archive_imagery(f17_figs, yyyy4, mm2, archive_dir):
         if fig is None:
             print(f'  Archive: skipping {prod_key} - no figure (missing input data?)')
             continue
-        gif_name = f'mw-hydro_v01_imagery_{archive_stem}_{yyyymm}.gif'
+        gif_name = f'mw-hydro_{PRODUCT_VERSION}_imagery_{archive_stem}_{yyyymm}.gif'
         save_gif(fig, os.path.join(archive_dir, gif_name))
         # Snow cover also requires a PostScript file for the NCEI imagery tar.
         # GrADS historically produced both .gif and .ps from the same render;
         # we replicate this by writing the same figure to PostScript format.
         if prod_key == 'snw':
-            ps_name = f'mw-hydro_v01_imagery_{archive_stem}_{yyyymm}.ps'
+            ps_name = f'mw-hydro_{PRODUCT_VERSION}_imagery_{archive_stem}_{yyyymm}.ps'
             save_ps(fig, os.path.join(archive_dir, ps_name))
 
 
