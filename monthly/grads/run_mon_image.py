@@ -143,6 +143,17 @@ MODIFICATION HISTORY
                              reserves 6-7% at figure bottom so colorbar label does not
                              collide with footer.
                              (12) 4-panel snow spacing tightened with h_pad/wspace pads.
+    2026-06-22  H. Semunegus  Footer/colorbar overlap regression fixed on the global
+                             maps (rainfall/LWP/WVP).  The rect reservation noted in
+                             item 11 was not present in the code, so plot_global's
+                             constrained_layout packed the colorbar units label
+                             ('mm/day') into the same band as the fig.text() footer
+                             ('DD Mon YYYY  NOAA NCEI') and the two strings overlapped.
+                             The global-map footer is now drawn with fig.supxlabel(),
+                             which the constrained_layout engine reserves space for
+                             (unlike fig.text), so it stacks cleanly below the colorbar
+                             label.  The snow 4-panel (subplots_adjust, constrained_layout
+                             OFF) keeps its fig.text() footer and is unchanged.
 """
 
 import os
@@ -831,23 +842,36 @@ def write_archive_imagery(f17_figs, yyyy4, mm2, archive_dir):
             save_ps(fig, os.path.join(archive_dir, ps_name))
 
 
-def _add_footer(fig):
+def _footer_str():
     """
-    Add the operational footer text at the bottom of the figure.
-
-    Format: '{D} {Mon} {YYYY}  NOAA NCEI'
-    Example: '17 Apr 2026  NOAA NCEI'
+    Return the operational footer text: '{D} {Mon} {YYYY}  NOAA NCEI'.
+    Example: '17 Apr 2026  NOAA NCEI'.
 
     Date uses today's actual date with a non-zero-padded day (matching the
     GrADS annotation convention: '17 Apr 2026', not '17 APR 2026').
+    strftime('%b') gives 'Apr' (title-case, not uppercase), matching ops style.
 
-    Called by: plot_global, plot_polar_4panel
+    Called by: _add_footer (snow 4-panel); plot_global (via fig.supxlabel).
     """
-    today    = datetime.date.today()
-    # strftime('%b') gives 'Apr' (title-case, not uppercase), matching ops style.
-    date_str = f'{today.day} {today.strftime("%b %Y")}'
-    fig.text(0.5, 0.01,
-             f'{date_str}  NOAA NCEI',
+    today = datetime.date.today()
+    return f'{today.day} {today.strftime("%b %Y")}  NOAA NCEI'
+
+
+def _add_footer(fig):
+    """
+    Draw the operational footer as a plain fig.text() at the bottom of the figure.
+
+    Used ONLY by the snow 4-panel (plot_polar_4panel), which lays out with
+    constrained_layout OFF and an explicit subplots_adjust(bottom=0.09) reserved
+    margin, so a fixed fig.text() at y=0.01 sits well clear of the lowest colorbar
+    label.  The global maps (plot_global) use constrained_layout, which ignores
+    fig.text(); they place the footer with fig.supxlabel() instead so the layout
+    engine reserves space for it and it cannot collide with the colorbar label
+    (see plot_global).
+
+    Called by: plot_polar_4panel
+    """
+    fig.text(0.5, 0.01, _footer_str(),
              ha='center', va='bottom', fontsize=7, style='italic', color='#333333')
 
 
@@ -986,7 +1010,15 @@ def plot_global(data, product_var, header_title,
     if len(levels) > 8:
         cbar.set_ticks(levels[::2])
 
-    _add_footer(fig)
+    # Footer (date + attribution).  This figure uses constrained_layout, which
+    # does NOT reserve space for a plain fig.text() - placing the footer that way
+    # packs it directly under the colorbar's units label (e.g. 'mm/day') and the
+    # two strings overlap (the jumbled text under the legend).  fig.supxlabel() IS
+    # accounted for by the constrained_layout engine, which stacks it cleanly
+    # below the colorbar label with automatic spacing - no manual offsets, no
+    # collision.  The snow 4-panel keeps the fig.text() footer (it lays out with
+    # constrained_layout OFF and reserves a bottom margin via subplots_adjust).
+    fig.supxlabel(_footer_str(), fontsize=7, fontstyle='italic', color='#333333')
     save_gif(fig, outpath)
     # Note: figure is NOT closed here - caller is responsible for plt.close(fig).
     # This allows run() to reuse the f17 figure for archive-named copies without
