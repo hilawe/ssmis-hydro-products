@@ -1106,7 +1106,7 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
 
     # Two-line suptitle above the subplot grid.
     # y=0.96 places it above top=0.88, giving ~0.9" of clear space.
-    fig.suptitle(f'{header_title}\nAnomaly Based on Departure from 1987-2010 Baseline',
+    fig.suptitle(f'{header_title}\nAnomaly Based on Departure from the 1991-2020 (WMO) Baseline',
                  fontsize=12, fontweight='bold', color='#1a1a6e', linespacing=1.4,
                  y=0.96)
 
