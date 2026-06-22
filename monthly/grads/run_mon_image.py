@@ -153,7 +153,12 @@ MODIFICATION HISTORY
                              which the constrained_layout engine reserves space for
                              (unlike fig.text), so it stacks cleanly below the colorbar
                              label.  The snow 4-panel (subplots_adjust, constrained_layout
-                             OFF) keeps its fig.text() footer and is unchanged.
+                             OFF) keeps its fig.text() footer and is unchanged.  The
+                             global-map figure height was raised 4.0->4.6in: once the
+                             footer correctly reserves space, the old 4.0in squeezed the
+                             fixed-aspect map until it became height-limited and shrank
+                             (~690 px wide); 4.6in keeps it width-limited (~880 px) with
+                             the footer clear.
 """
 
 import os
@@ -927,18 +932,24 @@ def plot_global(data, product_var, header_title,
     # causes the colorbar to overlap the map.
     #
     # Figure height: PlateCarree with extent [0,360,-50,50] has a 3.6:1 aspect
-    # ratio (360° lon / 100° lat).  In a 10"-wide figure the axes is ~2.5" tall.
-    # 4.0" leaves just enough room for title, map, colorbar, and footer.
+    # ratio (360° lon / 100° lat), so the map is widest (spans the full 10" width)
+    # only while the axes box stays wider than 3.6:1.  At 4.0" the title, colorbar,
+    # and footer reservation squeeze the axes height enough that the fixed-aspect
+    # map becomes height-limited and shrinks in BOTH dimensions (~690 px wide after
+    # the tight-bbox crop).  4.6" restores enough axes height to keep the map
+    # width-limited - it spans the full width (~1000 px) with the footer placed
+    # clear of the colorbar label.  (The earlier 4.0" assumed the footer overlapped
+    # the colorbar label and therefore needed no space of its own; that was the bug.)
     #
     # h_pad=0.2 (~0.5 cm) is tight but sufficient - keeps title clear of the map
     # and colorbar label clear of the footer without excess dead space.
     if HAS_CARTOPY:
         fig, ax = plt.subplots(
-            1, 1, figsize=(10, 4.0), constrained_layout=True,
+            1, 1, figsize=(10, 4.6), constrained_layout=True,
             subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180.0)}
         )
     else:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 4.0), constrained_layout=True)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4.6), constrained_layout=True)
     fig.set_constrained_layout_pads(h_pad=0.2, w_pad=0.3)
     fig.patch.set_facecolor('white')
 
