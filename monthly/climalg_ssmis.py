@@ -110,7 +110,7 @@ def precip8(ta, tb, lsrain, isnchk, add_si):
 
     # ---- OCEAN ----
     sct_oce = -182.7 + 0.75*ch1 + 2.543*ch3 - 0.00543*ch3*ch3 - ch6
-    ki_oce = np.clip(np.round(sct_oce).astype(np.int32), 0, 148)  # 0-indexed into 149
+    ki_oce = np.clip(np.round(sct_oce).astype(np.int32) - 1, 0, 148)  # 0-based; Fortran NINT(SCT) is 1-based
     sct_oce_corr = sct_oce - add_si[ki_oce, 0]
 
     # Scattering component over ocean
@@ -135,9 +135,9 @@ def precip8(ta, tb, lsrain, isnchk, add_si):
     rain_em_q37 = np.where(q37 >= 0.20,
                            0.001707 * np.maximum(q37 * 100.0, 0.0) ** 1.7359, 0.0)
 
-    # Select emission estimate
+    # Select emission estimate. Fortran applies the ch3<=TTT screen only in the
+    # scattering branch (PRECIP8, under IF SCT>=10), not here in the emission branch.
     rain_em_oce = np.where(q19 >= 0.60, rain_em_q19, rain_em_q37)
-    rain_em_oce = np.where(ch3 <= TTT, 0.0, rain_em_oce)
 
     # Ocean precip: scattering if SCT>=10 else emission
     rain_oce = np.where(sct_oce_corr >= 10.0, rain_sct_oce, rain_em_oce)
@@ -145,7 +145,7 @@ def precip8(ta, tb, lsrain, isnchk, add_si):
 
     # ---- LAND ----
     sct_lnd = 438.5 - 0.46*ch1 - 1.735*ch3 + 0.00589*ch3*ch3 - ch6
-    ki_lnd = np.clip(np.round(sct_lnd).astype(np.int32), 0, 148)
+    ki_lnd = np.clip(np.round(sct_lnd).astype(np.int32) - 1, 0, 148)  # 0-based; Fortran NINT(SCT) is 1-based
     sct_lnd_corr = sct_lnd - add_si[ki_lnd, 1]
 
     rain_lnd = np.where(
@@ -590,8 +590,9 @@ def process_file(fpath, tag_2d, add_oce, add_lnd, add_si,
             (ta[:, :, 6] == 102.0))  # (540, 1080)
 
     # Apply bias corrections (per channel, per land/ocean)
-    # kindex = round(TA) - 139 -> 0-indexed into LUT (161 entries, Fortran 1-161 -> 0-160)
-    kindex = np.clip(np.round(ta).astype(np.int32) - 139, 0, 160)  # (540, 1080, 7)
+    # kindex: 0-based row into the 161-entry LUT. Fortran uses NINT(TA)-139 as a
+    # 1-based index (row 1 = Ta 140 K), so the correct 0-based index is round(TA)-140.
+    kindex = np.clip(np.round(ta).astype(np.int32) - 140, 0, 160)  # (540, 1080, 7)
     tag_3d = tag_2d[:, :, np.newaxis]   # (540, 1080, 1)
     is_ocean = (tag_2d == 0)            # (540, 1080) bool
     is_ocean_3d = is_ocean[:, :, np.newaxis]
