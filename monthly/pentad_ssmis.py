@@ -74,7 +74,9 @@ def process_file_pentad(fpath, tag_2d, add_oce, add_lnd, add_si,
             (ta[:, :, 3] == 102.0) & (ta[:, :, 4] == 102.0) &
             (ta[:, :, 6] == 102.0))
 
-    kindex = np.clip(np.round(ta).astype(np.int32) - 139, 0, 160)
+    # kindex: 0-based row into the 161-entry LUT. Fortran uses NINT(TA)-139 as a
+    # 1-based index (row 1 = Ta 140 K), so the correct 0-based index is round(TA)-140.
+    kindex = np.clip(np.round(ta).astype(np.int32) - 140, 0, 160)
     is_ocean = (tag_2d == 0)
     is_missing_ch = (ta == 102.0)
 
