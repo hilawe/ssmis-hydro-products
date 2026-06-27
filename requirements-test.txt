@@ -1,0 +1,4 @@
+# Test-only dependency. The suite otherwise runs against the pipeline's own
+# runtime stack (numpy, scipy, netCDF4), which must already be installed on the
+# host. Tests that need a given package skip cleanly where it is absent.
+pytest>=7

@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Data and large build artifacts (never committed). Figures under images/ are
+# committed for the README and are not matched here.
+*.nc
+*.tar
+*.gz
