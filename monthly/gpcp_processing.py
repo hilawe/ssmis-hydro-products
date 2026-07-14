@@ -90,7 +90,17 @@ def read_snow_clim(month):
 
 
 def read_month_slice(fobj, month_idx):
-    """Read one month's grid (N_LON × N_LAT float32) from an open file."""
+    """Read one month's grid (N_LON × N_LAT float32) from an open file.
+
+    Reads SEQUENTIALLY from the handle's current position; month_idx is
+    informational (callers rely on one read per loop iteration for alignment).
+    DEFINED short-read behavior: at or past EOF (including a truncated final
+    month) this returns a full MISSING (-999.99) grid rather than raising, and
+    every subsequent read does the same, so a consumer iterating past a short
+    file degrades to fill months. gpcp_dual() depends on this to fall back to
+    the F-17-only estimate when an early-chain binary is shorter than the late
+    allocation.
+    """
     raw = np.fromfile(fobj, dtype=np.float32, count=GRID_SIZE)
     if raw.size != GRID_SIZE:
         return np.full((N_LON, N_LAT), MISSING, dtype=np.float32)
@@ -270,6 +280,18 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     (LATE_CONSTELLATION_SAT for the morning chain, EARLY_CONSTELLATION_SAT for the
     late-morning chain). The path_f17/path_f16 parameter names are kept for
     backward compatibility.
+
+    Merge policy (faithful to the published v01 algorithm, gpcp_f08_f10_dual.pro):
+    F-17 is primary. A cell gets the sampling-weighted two-satellite average only
+    where the F-17 estimate is valid (>= 0) and the summed sampling fraction is
+    positive; otherwise the F-17 value (including its fill) passes through. The
+    dual product therefore never has more spatial coverage than F-17 alone, and
+    F-16 is never substituted on its own. This is a settled product decision
+    (2026-07-14), not an oversight: the product is delivered as a GPCP input,
+    and its F-17-primary meaning is part of that delivery contract; do not
+    "improve" it by substituting F-16 months.
+    The dual SSA output uses the PR2 pass's validity gate, matching the legacy
+    last-write-wins behavior.
     """
     import shutil
     if path_f17 is None:
@@ -280,10 +302,17 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
 
     now = datetime.datetime.now(datetime.timezone.utc)
     cy, cm = now.year, now.month
-    increment_month = cm if cm != 0 else 12
 
     n_months_f17 = _months_since(_LATE_INIT_YEAR)    # total months in late record
-    icurrent_month = (n_months_f17 - 12) + increment_month
+    # Write cutoff = the last COMPLETE month (the month before the current system
+    # month), expressed as a 1-based index on the F-17 timeline (jmon 1 = Jan 1987).
+    # Months after the cutoff are written as fill. The earlier formula,
+    # (n_months_f17 - 12) + cm with the cm==1 special case inside _months_since, ran
+    # one month high from February through December (harmless, since that month is
+    # fill in the source) but in January collapsed to the PRIOR January, writing 11
+    # real prior-year months of the dual product as fill (data loss). Flagged by an
+    # independent adversarial review.
+    icurrent_month = (cy - _LATE_INIT_YEAR) * 12 + (cm - 1)
 
     print(f'gpcp_dual: n_months={n_months_f17}, current_month={icurrent_month}')
 
@@ -310,15 +339,34 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
 
         print(f'  Writing {out_pr}')
 
+        # The dual SSA output depends on the per-product `valid` gate below
+        # (ssmi_11 is the PR1 or PR2 field), so the two product passes produce
+        # DIFFERENT SSA byte streams and the archived content has always been the
+        # PR2-gated one (the legacy IDL also reopened unit 15 per product, with
+        # the last pass winning). Writing it only on the final pass preserves the
+        # output bytes exactly while removing the truncate-and-rewrite window in
+        # which an interruption between passes left a PR1-gated or partial SSA
+        # file (flagged by an independent second-model review).
+        write_ssa = (iproduct == 2)
+
         with open(f17_pr, 'rb') as fp17, \
              open(f17_ssa, 'rb') as fs17, \
-             open(out_pr, 'wb') as fpr_out, \
-             open(out_ssa, 'wb') as fssa_out:
+             open(out_pr, 'wb') as fpr_out:
+            fssa_out = open(out_ssa, 'wb') if write_ssa else None
 
             # The early-constellation record starts later than the late-constellation.
             # Calculate the offset in months between the two start years.
             f16_offset = (_EARLY_INIT_YEAR - _LATE_INIT_YEAR) * 12   # typically 60 (1992-1987)
-            n_months_f16 = _months_since(_EARLY_INIT_YEAR)
+
+            # No explicit upper bound on the F-16 reads is needed (and adding one
+            # would REGRESS the degraded case): if an early binary is shorter than
+            # the late allocation (lagged or partial upstream run), read_month_slice
+            # returns a fill grid past EOF, samp_total goes negative, the `valid`
+            # gate falls to False, and out_rain passes the F-17 value through per
+            # cell, exactly the desired F-17-only degradation. Routing exhausted
+            # months to the fill branch instead would discard valid F-17 data.
+            # (Both source files are allocated by the same _months_since call in a
+            # normal run, so the bound would never bind there anyway.)
 
             # Open f16 files separately
             f16_pr_fh   = open(f16_pr,  'rb') if os.path.exists(f16_pr)  else None
@@ -356,19 +404,24 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
 
                     if jmon <= icurrent_month:
                         fpr_out.write(out_rain.astype(np.float32).tobytes())
-                        fssa_out.write(out_samp.astype(np.float32).tobytes())
+                        if fssa_out:
+                            fssa_out.write(out_samp.astype(np.float32).tobytes())
                     else:
                         fpr_out.write(FILL.tobytes())
-                        fssa_out.write(FILL.tobytes())
+                        if fssa_out:
+                            fssa_out.write(FILL.tobytes())
                 else:
                     # Before f16 record: write fill
                     fpr_out.write(FILL.tobytes())
-                    fssa_out.write(FILL.tobytes())
+                    if fssa_out:
+                        fssa_out.write(FILL.tobytes())
 
             if f16_pr_fh:
                 f16_pr_fh.close()
             if f16_ssa_fh:
                 f16_ssa_fh.close()
+            if fssa_out:
+                fssa_out.close()
 
 
 def main():

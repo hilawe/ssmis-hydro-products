@@ -89,7 +89,12 @@ NOTES
     - Snow uses NPS/SPS polar stereographic projections, matching 'set mproj nps/sps'
     - Snow anomaly (panels 2 and 4) is 100×(current − 1991-2020 baseline mean),
       following the WMO Climate Normals standard period (updated May 2021).
-      Computed directly from the combined multi-year SNW binary, replicating:
+      Field and baseline are both at 1.0° from the same series: the morning-chain
+      ncdc-bin archive (F-08 -> F-17, back to 1987) for the morning primary, else the
+      per-satellite {sat}-1.0 yearly files. This replaces the earlier 2.5° anomaly
+      whose combined-bin baseline only reached ~2008. If the 1.0° field or baseline
+      is unavailable it falls back to the 2.5° anomaly with a non-WMO label.
+      Replicates:
         GrADS: define meanval = ave(maskout(sn,sn), t=startmon, t=endmon, 1yr)
                define percent = 100*(current - meanval)
     - Title spacing: matplotlib constrained_layout + fig.suptitle() are used for
@@ -244,11 +249,15 @@ LAT_EDGES = np.linspace(-90.0, 90.0, N_LAT + 1)  #  73 values, 2.5° boundaries
 # the 1.0-degree combined yearly file (f17-1.0/SNW.{yy}-f17-1.0).
 # Using 1.0° for the snow NH/SH panels gives 4× the spatial density vs 2.5°,
 # eliminating the large cell-edge holes and oversmoothing seen at 2.5°.
-# CTL: XDEF 360 LINEAR -0.5 1.0 / YDEF 180 LINEAR -89.5 1.0
+# The first 1.0° column is centered at 0.5°E (to_grads() in climalg_ssmis.py
+# rolls the 0°E-side bin to column 0, same convention as the 2.5° grid's
+# 1.25°E). The legacy snow_mon_10.ctl declares XDEF -0.5, which mislabels the
+# field one column (1°) west; verified against the writer and by coastline
+# mask alignment (2026-07-12). Do not copy the ctl value here.
 # ---------------------------------------------------------------------------
 N_LON_1 = 360
 N_LAT_1 = 180
-LONS_1 = np.array([-0.5 + j * 1.0 for j in range(N_LON_1)])  # -0.5 to 359.5
+LONS_1 = np.array([0.5 + j * 1.0 for j in range(N_LON_1)])   # 0.5 to 359.5
 LATS_1 = np.array([-89.5 + i * 1.0 for i in range(N_LAT_1)]) # -89.5 to 89.5
 
 # Three-letter month abbreviations matching the operational filename convention
@@ -260,6 +269,26 @@ SATELLITES = ['f17', 'f16', 'f18']
 
 # Start year for each satellite's combined multi-year binary (matches combine.py)
 SAT_START_YEAR = {'f17': 1987, 'f16': 1992, 'f18': 2010}
+
+# The morning (early) constellation, F-08 -> F-11 -> F-13 -> F-17, has a full
+# 1.0-degree monthly record on disk in ncdc-bin/{PROD}.{YY} (1987-present),
+# read by generate_netcdf.py run_early_1deg(). This is the ONLY chain with a
+# multi-decadal 1.0-degree archive, so it is the source for a genuine WMO
+# 1991-2020 snow-anomaly baseline. The current morning primary is F-17; if it
+# flips (e.g. to WSF-M), update this alongside the f17 archive-imagery logic.
+NCDC_BIN_SAT = 'f17'
+
+
+def _year4_from_yy(yy):
+    """Expand a 2-digit year to 4 digits using the pipeline's calendar rule
+    (same as ncdc-bin/{PROD}.{YY} and _compute_snow_climatology_1deg):
+    87-99 -> 1987-1999, 00-86 -> 2000-2086. For every currently renderable
+    month (2001 onward) this returns exactly what the former '20'+yy hardcode
+    did; it only differs for pre-2000 years, which the fixed '20' prefix would
+    have mislabeled (e.g. yy='98' -> '2098' on the image caption).
+    """
+    n = int(yy)
+    return f'19{n:02d}' if n >= 87 else f'20{n:02d}'
 
 # Default base paths (overridden by --indir / --outdir arguments)
 DEFAULT_INDIR  = '..'    # monthly/ directory (one level above grads/)
@@ -556,23 +585,42 @@ def read_snw_1deg(indir, sat, yy, mm):
     Called by: gen_snw
     """
     fpath = os.path.join(indir, f'{sat}-1.0', f'SNW.{yy}-{sat}-1.0')
-    mon_0based = int(mm) - 1           # 0-based month index (Jan=0, Mar=2, ...)
-    cells      = N_LON_1 * N_LAT_1    # 64,800 float32 values per month
-    byte_offset = mon_0based * cells * 4
+    grid = _read_1deg_month(fpath, int(mm) - 1)
+    if grid is None:
+        print(f'  1.0° snow file missing, too short, or month empty: {fpath}')
+    return grid
 
+
+def _read_1deg_month(fpath, mon_0based):
+    """
+    Read one calendar month from a 12-month 1.0-degree yearly binary.
+
+    Shared by read_snw_1deg (per-satellite {sat}-1.0/SNW.{yy}-{sat}-1.0 files)
+    and _compute_snow_climatology_1deg (the ncdc-bin/{PROD}.{YY} morning-chain
+    archive).  Both use the identical layout: 12 consecutive months, each
+    N_LON_1*N_LAT_1 = 64,800 float32 values in GrADS (N_LAT_1, N_LON_1) order
+    (south-first, 0.5°E-first, lon fastest).
+
+    Returns (N_LAT_1, N_LON_1) float32 with NaN at fill (<= -999.0), or None if
+    the file is missing or does not contain the requested month.
+    """
+    cells       = N_LON_1 * N_LAT_1
+    byte_offset = mon_0based * cells * 4
     if not os.path.exists(fpath):
-        print(f'  Missing 1.0° snow file: {fpath}')
         return None
     if os.path.getsize(fpath) < byte_offset + cells * 4:
-        print(f'  1.0° snow file too short: {fpath}')
         return None
-
     with open(fpath, 'rb') as f:
         f.seek(byte_offset)
         raw = f.read(cells * 4)
-
     grid = np.frombuffer(raw, dtype=np.float32).copy().reshape(N_LAT_1, N_LON_1)
     grid[grid <= -999.0] = np.nan
+    # A month slot present in the file but entirely fill (a not-yet-processed
+    # month, e.g. a mid-year gap in the yearly file) is treated as absent, so the
+    # current-field read falls back to 2.5-degree and empty baseline years are
+    # skipped rather than contributing an all-NaN layer.
+    if not np.any(~np.isnan(grid)):
+        return None
     return grid
 
 
@@ -678,27 +726,25 @@ def smooth_field(data, sigma=SMOOTH_SIGMA):
 def _compute_snow_climatology(indir, sat, cal_month_0based,
                                baseline_start=1991, baseline_end=2020):
     """
-    Compute the WMO 1991-2020 monthly snow-cover climatology for a given
-    satellite and calendar month, reading directly from the combined multi-year
-    binary.
+    2.5-degree monthly snow-cover climatology from the combined multi-year
+    binary. FALLBACK ONLY: gen_snw now computes the anomaly at 1.0-degree via
+    _compute_snow_climatology_1deg, and only calls this when the 1.0-degree
+    field or baseline is unavailable.
 
-    The baseline period 1991-2020 is the current WMO Climate Normals standard
-    period (WMO-No. 1203, adopted May 2021), replacing the previous 1987-2010
-    default.  This aligns SSMI/SSMIS snow anomaly fields with ERA5, GPCP v3,
-    IMERG, and the broader climate monitoring community.
+    IMPORTANT, why this is a fallback and not the primary: the 2.5-degree
+    combined bin SNW-{sat}-2.5 only holds valid morning-chain data from about
+    2008 onward (the archived daily Ta grids do not reach earlier). So although
+    this asks for the WMO 1991-2020 period, the years it actually finds are
+    roughly 2008-2020 for the morning chain, i.e. a ~13-year average, NOT the
+    30-year normal. gen_snw therefore labels the fallback anomaly with a
+    non-WMO caption. The genuine 1991-2020 baseline lives in the 1.0-degree
+    ncdc-bin archive and is used by _compute_snow_climatology_1deg.
 
     Replicates the GrADS snow_4.gs definition:
       'define meanval = ave(maskout(sn, sn), t=startmon, t=endmon, 1yr)'
-    where 't=startmon' and 't=endmon' bound the 1991-2020 period for the
-    target calendar month, and '1yr' tells GrADS to stride by 12 months
-    (i.e., accumulate only the matching calendar month from each year).
-
-    Satellite-specific baseline coverage with the WMO 1991-2020 period:
-      F-17 (late chain): record starts 1987, baseline covers 1991-2020 = 30 yr
-      F-16 (early chain): record starts 1992, baseline covers 1992-2020 = 29 yr
-      F-18: record starts 2010, baseline covers 2010-2020 = 11 yr (up from 1 yr
-            under the old 1987-2010 baseline, making F-18 anomalies scientifically
-            useful for the first time)
+    where 't=startmon' and 't=endmon' bound the requested period for the target
+    calendar month, and '1yr' tells GrADS to stride by 12 months (accumulate
+    only the matching calendar month from each year).
 
     Parameters
     ----------
@@ -750,6 +796,85 @@ def _compute_snow_climatology(indir, sat, cal_month_0based,
     print(f'  Climatology: averaged {len(monthly_grids)} years '
           f'({eff_start}-{eff_end}) for {sat} month {cal_month_0based+1:02d}')
     return clim
+
+
+def _compute_snow_climatology_1deg(indir, sat, cal_month_0based,
+                                   baseline_start=1991, baseline_end=2020):
+    """
+    Compute the WMO 1991-2020 monthly snow-cover climatology at 1.0-degree,
+    from the same 1.0-degree series used for the display panels.
+
+    This supersedes _compute_snow_climatology (which reads the 2.5-degree
+    combined bins).  Those 2.5-degree combined files only hold valid data from
+    2008 onward (morning chain), so their "1991-2020" baseline was in practice a
+    ~2008-2020 average.  Computing the whole anomaly at 1.0-degree from a series
+    that reaches back to 1987 gives a genuine WMO normal, and keeps the baseline
+    and the current-month field at the same resolution (no 1.0-vs-2.5 mixing).
+
+    Baseline source by chain:
+      - Morning chain (NCDC_BIN_SAT, currently F-17): the ncdc-bin archive
+        ncdc-bin/SNW.{YY}, F-08 -> F-17, real data for 29 of the 30 years
+        1991-2020 (only Jan 1991 absent, the F-08/F-11 handover).
+      - Other satellites (F-16 late chain, F-18): their own per-year 1.0-degree
+        files {sat}-1.0/SNW.{yy}-{sat}-1.0, which currently begin in 2006.  Each
+        satellite uses only its own chain, so no cross-chain calibration mixing.
+
+    Years whose file is absent, or whose requested month is fill/empty (fewer
+    than 2% valid cells), are skipped; the climatology is the nanmean of the
+    remaining years, so a fill cell in some years does not corrupt the mean.
+    No per-cell minimum-year requirement is enforced, matching the operational
+    GrADS definition ave(maskout(sn,sn), t=start, t=end, 1yr), which averages
+    whatever valid years a cell has. A cell valid in only a few baseline years
+    therefore still gets a climatology (and a defined anomaly); cells with no
+    valid baseline year remain NaN.
+
+    Parameters
+    ----------
+    indir : str
+        Root monthly directory (holds ncdc-bin/ and {sat}-1.0/).
+    sat : str
+        Satellite identifier ('f17', 'f16', 'f18').
+    cal_month_0based : int
+        Calendar-month index (0=Jan ... 11=Dec).
+    baseline_start, baseline_end : int
+        Inclusive WMO baseline period (default 1991-2020).
+
+    Returns
+    -------
+    (clim, n_years) : (ndarray (N_LAT_1, N_LON_1) float32, int), or (None, 0)
+        Climatological-mean snow fraction and the number of contributing years.
+
+    Called by: gen_snw
+    """
+    cells = N_LON_1 * N_LAT_1
+    grids = []
+    for yr in range(baseline_start, baseline_end + 1):
+        yy2 = yr % 100
+        if sat == NCDC_BIN_SAT:
+            fpath = os.path.join(indir, 'ncdc-bin', f'SNW.{yy2:02d}')
+        else:
+            fpath = os.path.join(indir, f'{sat}-1.0', f'SNW.{yy2:02d}-{sat}-1.0')
+        grid = _read_1deg_month(fpath, cal_month_0based)
+        if grid is None:
+            continue
+        if np.count_nonzero(~np.isnan(grid)) < cells * 0.02:
+            continue    # month present but empty/fill (e.g. pre-launch year)
+        grids.append(grid)
+
+    if not grids:
+        print(f'  1.0° climatology: no baseline months found for {sat}')
+        return None, 0
+    with warnings.catch_warnings():
+        # Cells with no valid baseline year nanmean to NaN (correct); silence only
+        # the routine "Mean of empty slice" notice, leaving any real overflow or
+        # invalid-arithmetic RuntimeWarning from corrupt input to surface.
+        warnings.filterwarnings('ignore', message='Mean of empty slice')
+        clim = np.nanmean(np.stack(grids, axis=0), axis=0).astype(np.float32)
+    src = 'ncdc-bin' if sat == NCDC_BIN_SAT else f'{sat}-1.0'
+    print(f'  1.0° climatology: averaged {len(grids)} years '
+          f'({baseline_start}-{baseline_end}, {src}) for {sat} '
+          f'month {cal_month_0based+1:02d}')
+    return clim, len(grids)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,15 +1232,16 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
     if data_full is None:
         return None
 
-    # Use caller-supplied coordinate arrays (1.0° snow, 2.5° anomaly by default)
+    # Use caller-supplied coordinate arrays. gen_snw() now supplies 1.0° grids
+    # for both the snow field and the anomaly (from ncdc-bin / {sat}-1.0); the
+    # 2.5° defaults here apply only to the fallback path and any legacy caller.
     _snw_lons  = snw_lons  if snw_lons  is not None else LONS
     _snw_lats  = snw_lats  if snw_lats  is not None else LATS
     _anom_lons = anom_lons if anom_lons is not None else LONS
     _anom_lats = anom_lats if anom_lats is not None else LATS
 
-    # Anomaly is pre-computed by gen_snw() at 2.5° resolution using 2.5° snow data
-    # and the 2.5° combined-binary climatology, matching the ops approach where
-    # snow_4.gs closes snow_mon_10.ctl and re-opens snow_mon_25.ctl for the anomaly.
+    # Anomaly is pre-computed by gen_snw() on the grid given by anom_lons/anom_lats
+    # (1.0° from the WMO 1991-2020 ncdc-bin baseline, or 2.5° on the fallback path).
     anom = anom_precomp
 
     norm_snw  = mcolors.BoundaryNorm(boundaries=levels,      ncolors=cmap.N,      clip=False)
@@ -1182,8 +1308,9 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
     # Panel specification:
     #   (row, col, lat_s, lat_n, field, norm, cmap_used, field_lons, field_lats,
     #    title, cbar_lbl)
-    # Snow panels use caller-supplied coordinates (_snw_lons/_snw_lats, typically
-    # 1.0°); anomaly panels use the 2.5° LONS/LATS (matching snow_mon_25.ctl).
+    # Snow and anomaly panels both use caller-supplied coordinates
+    # (_snw_lons/_snw_lats and _anom_lons/_anom_lats); gen_snw now supplies 1.0°
+    # for both, with 2.5° only on the fallback path.
     panels = [
         (0, 0, 30,  90,  data_full, norm_snw,  cmap,
          _snw_lons, _snw_lats, 'Northern Hemisphere',         cbar_label),
@@ -1240,8 +1367,8 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
                                    cmap=cm, norm=norm, shading='flat')
         else:
             # contourf with masked-invalid data.
-            # Using the per-panel f_lons/f_lats allows snow panels (1.0°) and
-            # anomaly panels (2.5°) to use their own coordinate arrays.
+            # Per-panel f_lons/f_lats let each panel use its own coordinate
+            # arrays (snow and anomaly both 1.0°, or 2.5° on the fallback path).
             field_masked = np.ma.masked_invalid(field)
             extend_mode  = 'both' if cm is anom_cmap else 'max'
             if HAS_CARTOPY:
@@ -1301,7 +1428,7 @@ def gen_pr1(sat, yy, mm, outdir, indir):
     data = data / float(ndays)
 
     mon_name     = MONTH_ABBR[mon_idx]
-    yr4          = f'20{yy}'
+    yr4          = _year4_from_yy(yy)
     header_title = f'Rainfall for {mon_name} {yr4}'
     outpath      = os.path.join(outdir, f'{mon_name}{yy}-ra-25prod.gif')
     return plot_global(data, 'ra', header_title,
@@ -1328,7 +1455,7 @@ def gen_lwp(sat, yy, mm, outdir, indir):
     data = data / 1000.0
 
     mon_name     = MONTH_ABBR[mon_idx]
-    yr4          = f'20{yy}'
+    yr4          = _year4_from_yy(yy)
     header_title = f'Liquid Water Path for {mon_name} {yr4}'
     outpath      = os.path.join(outdir, f'{mon_name}{yy}-lw-25prod.gif')
     return plot_global(data, 'lw', header_title,
@@ -1356,7 +1483,7 @@ def gen_wvp(sat, yy, mm, outdir, indir):
     # No scaling needed (already in mm; GrADS: 'display ta' directly)
 
     mon_name     = MONTH_ABBR[mon_idx]
-    yr4          = f'20{yy}'
+    yr4          = _year4_from_yy(yy)
     header_title = f'Total Precipitable Water for {mon_name} {yr4}'
     outpath      = os.path.join(outdir, f'{mon_name}{yy}-ta-25prod.gif')
     return plot_global(data, 'ta', header_title,
@@ -1372,14 +1499,18 @@ def gen_snw(sat, yy, mm, outdir, indir):
 
     Replicates the complete snow_4.gs 4-panel layout:
       Panel 1 (top-left):  NH snow cover (NPS, lat 30-90°N)
-      Panel 2 (top-right): NH anomaly (100 × departure from 1987-2010 mean)
+      Panel 2 (top-right): NH anomaly (100 × departure from WMO 1991-2020 mean)
       Panel 3 (bot-left):  SH snow cover (SPS, lat 30-90°S)
       Panel 4 (bot-right): SH anomaly
 
-    The 1987-2010 climatological mean is computed directly from the combined
-    multi-year binary SNW-{sat}-2.5, replicating the GrADS expression:
-      'define meanval = ave(maskout(sn,sn), t=startmon, t=endmon, 1yr)'
-    where startmon/endmon bound the March months from 1987 to 2010.
+    Both the snow field and the anomaly are computed at 1.0-degree.  The WMO
+    1991-2020 climatological mean comes from the same 1.0-degree series
+    (_compute_snow_climatology_1deg): the ncdc-bin morning-chain archive
+    (F-08 -> F-17, back to 1987) for the morning primary, else the
+    per-satellite {sat}-1.0 yearly files.  This replaces the earlier 2.5-degree
+    anomaly whose combined-bin baseline only reached 2008.  If the 1.0-degree
+    current field or baseline is unavailable, the panel falls back to the
+    2.5-degree anomaly so it still renders.
 
     Output filename: {Mon}{YY}-sn-25prod.gif
     GrADS reference: snow_4.gs
@@ -1401,49 +1532,80 @@ def gen_snw(sat, yy, mm, outdir, indir):
     else:
         snw_lons, snw_lats = LONS_1, LATS_1   # 1.0° centers
 
-    if data is None:
+    # Decline if there is no current-month snow field to show. This catches both a
+    # missing file (data is None) and a present-but-entirely-fill month, which the
+    # 2.5° reader (read_grads_binary) returns as an all-NaN grid rather than None
+    # (unlike the 1.0° reader). Without this guard such a month renders as a blank
+    # 4-panel figure that falsely reads as "no snow anywhere" (e.g. a not-yet-
+    # processed or partially-written month). The 1.0° path already rejects an
+    # all-fill month upstream in _read_1deg_month; this makes the 2.5° path match.
+    if data is None or not np.any(np.isfinite(data)):
+        if data is not None:
+            print(f'  Snow field all fill for {sat} {yy}-{mm}; no image written')
         return None
 
     mon_name     = MONTH_ABBR[mon_idx]
-    yr4          = f'20{yy}'
+    yr4          = _year4_from_yy(yy)
     header_title = f'Snow Cover for {mon_name} {yr4}'
     outpath      = os.path.join(outdir, f'{mon_name}{yy}-sn-25prod.gif')
 
-    # Compute the 2.5° anomaly, matching the operational snow_4.gs approach:
-    #   GrADS closes snow_mon_10.ctl (1.0°) and re-opens snow_mon_25.ctl (2.5°)
-    #   to compute 'define meanval = ave(maskout(sn,sn), t=startmon, t=endmon, 1yr)'
-    #   and 'define percent = 100*(current - meanval)'.
-    # Here we read the 2.5° per-month binary and the 2.5° combined climatology
-    # separately so that the anomaly is entirely at 2.5° resolution, independent
-    # of the 1.0° snow field used for the NH/SH display panels.
-    fpath_25 = os.path.join(indir, f'{sat}-2.5', f'SNW{yy}-{mm}-{sat}-2.5')
-    data_25  = read_grads_binary(fpath_25)   # (72, 144) float32 or None
+    # Anomaly, computed entirely at 1.0-degree.  The current month is the same
+    # 1.0-degree field shown in the NH/SH panels (from ncdc-bin for the morning
+    # chain, or the per-satellite {sat}-1.0 yearly file).  The baseline is the
+    # genuine WMO 1991-2020 normal from the same 1.0-degree series
+    # (_compute_snow_climatology_1deg).  This replaces the former 2.5-degree
+    # anomaly, whose combined-bin baseline only reached 2008 and so was really a
+    # ~13-year average mislabeled as 1991-2020.  Doing both fields at 1.0-degree
+    # also removes the previous 1.0-vs-2.5 resolution mismatch between the
+    # display panels and the anomaly.
+    #
+    # GrADS reference (snow_4.gs): 'define percent = 100*(current - meanval)'
+    # where meanval = ave(maskout(sn,sn), t=startmon, t=endmon, 1yr).
+    anom = None
+    anom_lons_use, anom_lats_use = LONS_1, LATS_1
+    # Anomaly-panel label tracks the baseline ACTUALLY used, and the WMO claim is
+    # asserted only inside the successful 1.0-degree branch. The neutral default
+    # holds if no anomaly can be computed (placeholder panel) so the WMO label
+    # never appears without the WMO baseline behind it.
+    anom_label = '% departure from baseline mean'
+    if snw_lons is LONS_1:               # current field is 1.0-degree
+        clim_1deg, n_base = _compute_snow_climatology_1deg(
+            indir, sat, mon_idx, baseline_start=1991, baseline_end=2020)
+        if clim_1deg is not None:
+            # NaN propagates through the subtraction, so a fill cell in either the
+            # current field or the baseline yields NaN in the anomaly (no explicit
+            # mask needed). The Python float 100.0 does not upcast the float32 arrays.
+            anom = (100.0 * (data - clim_1deg)).astype(np.float32)
+            # Report the realized baseline length. It is the full WMO window only for
+            # the morning primary (f17, 29 of 30 yr); the late chain covers fewer years
+            # (f16 ~15, f18 ~11 within 1991-2020), so naming the count keeps the label
+            # honest rather than implying a full 30-year normal for every satellite.
+            anom_label = f'% departure from 1991-2020 mean (WMO, {n_base} yr)'
 
-    # WMO Climate Normals standard period 1991-2020 (WMO-No. 1203, May 2021).
-    # Baseline defaults are now 1991/2020 in _compute_snow_climatology();
-    # explicit args retained here for clarity and to allow override if needed.
-    clim_25  = _compute_snow_climatology(indir, sat, mon_idx,
-                                         baseline_start=1991, baseline_end=2020)
-
-    if data_25 is not None and clim_25 is not None:
-        # Anomaly = 100 × (current − mean).  NaN where either field is NaN
-        # (ocean, data void, or no baseline years for this satellite).
-        anom = np.where(
-            np.isnan(data_25) | np.isnan(clim_25),
-            np.nan,
-            100.0 * (data_25 - clim_25)
-        ).astype(np.float32)
-    else:
-        anom = None
+    if anom is None:
+        # 1.0-degree current field or baseline unavailable (e.g. 2.5° fallback
+        # path). Fall back to the 2.5-degree anomaly so the panel still renders.
+        # That 2.5-degree combined baseline only reaches ~2008 for the morning
+        # chain, so it is NOT the WMO normal; the label is set accordingly to
+        # avoid mislabeling the fallback image.
+        fpath_25 = os.path.join(indir, f'{sat}-2.5', f'SNW{yy}-{mm}-{sat}-2.5')
+        data_25  = read_grads_binary(fpath_25)
+        clim_25  = _compute_snow_climatology(indir, sat, mon_idx,
+                                             baseline_start=1991, baseline_end=2020)
+        if data_25 is not None and clim_25 is not None:
+            # NaN propagates through the subtraction (see the 1.0-degree branch).
+            anom = (100.0 * (data_25 - clim_25)).astype(np.float32)
+            anom_lons_use, anom_lats_use = LONS, LATS
+            anom_label = '% departure from recent-period mean'
 
     return plot_polar_4panel(
         data, anom, header_title,
         SNW_CMAP,  SNW_LEVELS,
         ANOM_CMAP, ANOM_LEVELS,
-        'monthly snow cover fraction', '% departure from 1991-2020 mean (WMO)',
+        'monthly snow cover fraction', anom_label,
         outpath,
         snw_lons=snw_lons, snw_lats=snw_lats,
-        anom_lons=LONS, anom_lats=LATS    # anomaly always 2.5°
+        anom_lons=anom_lons_use, anom_lats=anom_lats_use
     )
 
 
@@ -1479,7 +1641,7 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
     """
     mm_str = f'{int(mm):02d}'
     yy_str = f'{int(yy):02d}'
-    yyyy4  = f'20{yy_str}'
+    yyyy4  = _year4_from_yy(yy_str)
     _indir  = indir  if indir  is not None else DEFAULT_INDIR
     _outdir = outdir if outdir is not None else DEFAULT_OUTDIR
 
@@ -1492,7 +1654,7 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
         # Each satellite writes to its own subdirectory so files are never overwritten.
         sat_outdir = os.path.join(_outdir, sat)
         os.makedirs(sat_outdir, exist_ok=True)
-        print(f'\n=== Generating images for {sat.upper()}, 20{yy_str}-{mm_str} ===')
+        print(f'\n=== Generating images for {sat.upper()}, {yyyy4}-{mm_str} ===')
 
         fig_pr1 = gen_pr1(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_lwp = gen_lwp(sat, yy_str, mm_str, sat_outdir, _indir)
@@ -1553,7 +1715,7 @@ def main():
         prev            = first_this_mon - datetime.timedelta(days=1)
         yy = str(prev.year % 100).zfill(2)
         mm = str(prev.month).zfill(2)
-        print(f'Auto-detected previous month: 20{yy}-{mm}')
+        print(f'Auto-detected previous month: {_year4_from_yy(yy)}-{mm}')
 
     run(yy, mm, indir=args.indir, outdir=args.outdir, archive_dir=args.archive_dir)
 

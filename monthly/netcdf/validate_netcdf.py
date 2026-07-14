@@ -155,7 +155,7 @@ def read_binary_month(binary_file, imonth, grid):
 
 def run_python_netcdf_for_product(prod_key, bin_file, imonth, year, month,
                                   constellation, title, history, summary,
-                                  out_prefix, out_dir, grid):
+                                  out_prefix, out_dir, grid, initial_year=None):
     """
     Generate a single Python NetCDF file for one product/month using Q1 binary data.
 
@@ -181,8 +181,11 @@ def run_python_netcdf_for_product(prod_key, bin_file, imonth, year, month,
 
     gn.write_netcdf(
         ncfile, data, lats, lons, year, month, prod_key,
-        title=gn.PRODUCT_TITLES_25.get(prod_key, prod_key),
-        initial_year=(1987 if 'late' in out_prefix else 1992),
+        title=title,
+        # Explicit initial_year preferred (the prefix heuristic predates the
+        # gpcp-input naming and cannot distinguish the dual family).
+        initial_year=(initial_year if initial_year is not None
+                      else (1987 if 'late' in out_prefix else 1992)),
         constellation=constellation,
         history=history,
         summary=summary,
@@ -521,38 +524,176 @@ def validate_early_25deg():
     return stats_rows
 
 
+def validate_gpcp_wrappers():
+    """
+    End-to-end check of the REAL gpcp-input writer wrappers.
+
+    Runs generate_netcdf.run_gpcp_{late,early,dual}_netcdf() into an isolated
+    directory (inputs resolve via their '../gpcp/' convention relative to the
+    working directory, i.e. the live monthly/gpcp inputs; outputs go only to the
+    isolated directory). Then checks:
+      1. For the newest month present in ALL nine (product, family) combinations,
+         all nine files exist with the exact archive names
+         mw-hydro_{ver}_gpcp-input_{prod}_{tag}_{YYYYMM}.nc that the
+         tar_mw-hydro_netcdf.sh 'gpcp-input' domain glob packages.
+      2. The dual PR1 file's metadata states the merged constellation and the
+         1992 dual coverage start (while its date indexing uses the uniform
+         1987 Python origin).
+      3. Each of the nine carries its correct CF variable (rainfall_alg1/2,
+         sampling_fraction).
+
+    Added after an independent adversarial review found the previous validator
+    constructed its own (obsolete) prefixes with a private writer, so it could
+    pass while the operational writers produced unarchivable names.
+
+    Called by:  validate_gpcp()
+    """
+    import shutil
+    out = os.path.join(TESTOUT_DIR, 'gpcp_wrappers/')
+    shutil.rmtree(out, ignore_errors=True)
+
+    print('\n  -- Wrapper end-to-end (real run_gpcp_*_netcdf into isolated dir) --')
+    gn.run_gpcp_late_netcdf(out_dir=out)
+    gn.run_gpcp_early_netcdf(out_dir=out)
+    gn.run_gpcp_dual_netcdf(out_dir=out)
+
+    files = set(os.listdir(out)) if os.path.isdir(out) else set()
+    combos = [(p, t) for p in ('pr1', 'pr2', 'ssa') for t in ('late', 'early', 'dual')]
+
+    # Newest month per combo. All nine families are maintained through the same
+    # last complete month operationally, so their newest months must be EQUAL.
+    # (A weaker newest-common-month intersection would silently pass on an old
+    # month if one family stopped producing, masking exactly the regression this
+    # check exists to catch.)
+    newest = {}
+    ok = True
+    for p, t in combos:
+        pre = f'mw-hydro_{gn.PRODUCT_VERSION}_gpcp-input_{p}_{t}_'
+        months = {f[len(pre):-3] for f in files if f.startswith(pre) and f.endswith('.nc')}
+        if not months:
+            print(f'    [FAIL] no output at all for {p}_{t}')
+            ok = False
+        else:
+            newest[(p, t)] = max(months)
+    if not ok or not newest:
+        return False
+
+    if len(set(newest.values())) != 1:
+        print('    [FAIL] families are not current through the same month: '
+              + ', '.join(f'{p}_{t}={m}' for (p, t), m in sorted(newest.items())))
+        return False
+    target = next(iter(set(newest.values())))
+
+    # Staleness guard. Same-month equality alone would PASS a pipeline that
+    # stalled entirely (all nine families equally old), which is exactly a
+    # failure an operator needs to see (flagged by a second independent
+    # reviewer). Expected newest = the last complete calendar month; allow one
+    # extra month of slack for validation runs made before the monthly job.
+    import datetime as _dt
+    _today = _dt.date.today()
+    _months_now = _today.year * 12 + (_today.month - 1)
+    _months_tgt = int(target[:4]) * 12 + (int(target[4:6]) - 1)
+    _age = _months_now - _months_tgt          # 1 = last complete month
+    if _age > 2:
+        print(f'    [FAIL] all nine families stop at {target}, {_age} months '
+              f'before the current month; the GPCP pipeline looks stalled')
+        return False
+    print(f'    [PASS] all nine families current through {target} '
+          f'(age {_age} month(s) vs system date)')
+
+    expected = [f'mw-hydro_{gn.PRODUCT_VERSION}_gpcp-input_{p}_{t}_{target}.nc'
+                for p, t in combos]
+    missing = [e for e in expected if e not in files]
+    status = 'PASS' if not missing else 'FAIL'
+    print(f'    [{status}] month {target}: {9 - len(missing)}/9 archive-named files present'
+          + (f'; missing {missing}' if missing else ''))
+    ok = ok and not missing
+
+    # CF variable and product title per file; dual metadata.
+    var_of = {'pr1': 'rainfall_alg1', 'pr2': 'rainfall_alg2', 'ssa': 'sampling_fraction'}
+    key_of = {'pr1': 'PR1', 'pr2': 'PR2', 'ssa': 'SSA'}
+    for p, t in combos:
+        fname = f'mw-hydro_{gn.PRODUCT_VERSION}_gpcp-input_{p}_{t}_{target}.nc'
+        if fname not in files:
+            continue
+        with Dataset(os.path.join(out, fname)) as ds:
+            if var_of[p] not in ds.variables:
+                print(f'    [FAIL] {fname}: missing variable {var_of[p]}')
+                ok = False
+            want_title = gn.PRODUCT_TITLES_25.get(key_of[p])
+            if getattr(ds, 'title', None) != want_title:
+                print(f'    [FAIL] {fname}: title {getattr(ds, "title", None)!r} '
+                      f'!= expected {want_title!r}')
+                ok = False
+            if p == 'pr1' and t == 'dual':
+                meta_ok = ('merged' in getattr(ds, 'constellation', '')
+                           and '1992' in getattr(ds, 'summary', ''))
+                status = 'PASS' if meta_ok else 'FAIL'
+                print(f'    [{status}] dual metadata: constellation='
+                      f'{getattr(ds, "constellation", "?")!r}, '
+                      f'summary states 1992 coverage={"1992" in getattr(ds, "summary", "")}')
+                ok = ok and meta_ok
+    if ok:
+        print('    [PASS] all nine files carry their correct CF variables and titles')
+    return ok
+
+
 def validate_gpcp():
     """
-    Validate Python GPCP NetCDF (late and early) for Mar 2026.
+    Validate Python GPCP NetCDF (late, early, dual; PR1, PR2, SSA) for Mar 2026,
+    plus an end-to-end check of the real gpcp-input writer wrappers.
 
-    The GPCP output files carry only PR1 and PR2.  No IDL-generated GPCP NetCDF
-    reference files exist in the Q1 archive (the IDL pipeline never archived GPCP
-    NetCDF files separately from the main 2.5-deg bundle).
-
-    Validation strategy (closed-chain):
-      1. Generate Python GPCP NetCDF from Q1 GPCP binary (gpcp_nesdis_pr1.dat etc.).
-      2. Read the generated NetCDF back and compare its data values against
-         numpy-direct reads of the same binary file (ground truth).
-      3. If NetCDF data == binary data (100% exact), then NetCDF I/O is correct.
-      4. Since the GPCP binary was independently validated 100% exact vs IDL
-         (Section 6.10 of the project documentation), the chain is:
+    Two layers:
+      A. Wrapper end-to-end (validate_gpcp_wrappers): run the ACTUAL
+         run_gpcp_{late,early,dual}_netcdf() wrappers into an isolated directory
+         and require, for the newest month common to all families, the full set of
+         nine archive files named mw-hydro_{ver}_gpcp-input_{prod}_{tag}_{YYYYMM}.nc
+         (the tar_mw-hydro_netcdf.sh 'gpcp-input' domain contract), with the dual
+         metadata stating merged constellation and 1992 coverage. This exercises
+         the same code path the archive uses; an earlier validator built its own
+         prefixes with a private writer and could pass while the writers were
+         broken (flagged by an independent adversarial review).
+      B. Round-trip (this function): generate per-product NetCDF from the Q1 GPCP
+         binaries and compare the NetCDF data against numpy-direct reads of the
+         same binary (ground truth). Combined with the binary == IDL validation
+         (Section 6.10 of the project documentation):
             binary == IDL  AND  NetCDF == binary  ⟹  NetCDF == IDL.
-      5. Structural/attribute checks (CF metadata, coordinates, time) are run
-         on the generated files.
+
+    Notes on the archive contract:
+      - v01 gpcp-input files exist in the Q1 archive, but the legacy IDL misnamed
+        the PR2 output 'pr1' (both outname slots used pr1), so v01 pr1 files carry
+        PR2 data and no true PR2 file exists. Python uses correct pr1/pr2/ssa
+        names, so filename-for-filename IDL comparison is deliberately NOT used.
+      - The Q1 (Fortran/IDL) dual binary uses a 1992 origin; the Python dual uses
+        the F-17 1987 origin (uniform Python REF_DATE). The round-trip below reads
+        the Q1 dual with the 1992-origin month index accordingly.
 
     GPCP CDR labels were CORRECT in both IDL and Python (no inversion):
       late -> F17 (6pm chain), reads gpcp_nesdis_pr1.dat
       early -> F16 (morning chain), reads gpcp_nesdis_f10_pr1.dat
 
     Called by:  main()
-    Calls:      run_python_netcdf_for_product(), check_attributes(),
-                read_binary_month(), netCDF4.Dataset
+    Calls:      validate_gpcp_wrappers(), run_python_netcdf_for_product(),
+                check_attributes(), read_binary_month(), netCDF4.Dataset
     """
     print('\n' + '='*70)
-    print('SECTION C: GPCP NetCDF - Python vs Q1 binary round-trip (Mar 2026)')
-    print('  (No IDL GPCP NetCDF reference in Q1 archive; chain validated via binary)')
+    print('SECTION C: GPCP NetCDF - wrappers end-to-end + Q1 binary round-trip')
     print('  GPCP labels NEVER inverted - late=F17 6pm, early=F16 morning in both')
     print('='*70)
+
+    # Wrapper failure must reach main()'s summary and exit code (an earlier
+    # version only printed, so a wrapper regression could not fail the run).
+    # Represented as a standard result row: 'error' is set on failure.
+    wrappers_ok = validate_gpcp_wrappers()
+    wrapper_row = {
+        'prod': 'ALL', 'label': 'GPCP wrappers end-to-end',
+        'error': None if wrappers_ok else 'wrapper end-to-end check FAILED',
+        'exact_pct': 100.0 if wrappers_ok else 0.0,
+        'coords_ok': wrappers_ok, 'time_ok': wrappers_ok,
+        'n_valid_nc': 0, 'n_valid_bin': 0, 'n_joint': 0,
+        'mean_nc': np.nan, 'mean_bin': np.nan,
+        'bias': np.nan, 'max_abs_diff': np.nan,
+    }
 
     gpcp_configs = [
         {
@@ -560,9 +701,10 @@ def validate_gpcp():
             'products': {
                 'PR1': ('gpcp_nesdis_pr1.dat',    IMONTH_GPCP_LATE),
                 'PR2': ('gpcp_nesdis_pr2.dat',    IMONTH_GPCP_LATE),
+                'SSA': ('gpcp_nesdis_ssa.dat',    IMONTH_GPCP_LATE),
             },
             'constellation': 'SSMIS F-17: January 1987-present',
-            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp_late_{prod}_',
+            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp-input_{prod}_late_',
             'out_subdir': 'gpcp_late',
             'initial_year': 1987,
         },
@@ -571,15 +713,30 @@ def validate_gpcp():
             'products': {
                 'PR1': ('gpcp_nesdis_f10_pr1.dat', IMONTH_GPCP_EARLY),
                 'PR2': ('gpcp_nesdis_f10_pr2.dat', IMONTH_GPCP_EARLY),
+                'SSA': ('gpcp_nesdis_f10_ssa.dat', IMONTH_GPCP_EARLY),
             },
             'constellation': 'SSMIS F-16: January 1992-present',
-            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp_early_{prod}_',
+            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp-input_{prod}_early_',
             'out_subdir': 'gpcp_early',
             'initial_year': 1992,
         },
+        {
+            # Q1 dual binaries use the 1992 origin (Fortran convention), so the
+            # month index for Mar 2026 is the EARLY index, not the LATE one.
+            'label': 'GPCP Dual (F17+F16)',
+            'products': {
+                'PR1': ('gpcp_nesdis_dual_pr1.dat', IMONTH_GPCP_EARLY),
+                'PR2': ('gpcp_nesdis_dual_pr2.dat', IMONTH_GPCP_EARLY),
+                'SSA': ('gpcp_nesdis_dual_ssa.dat', IMONTH_GPCP_EARLY),
+            },
+            'constellation': 'SSMIS F-17 and F-16 merged; January 1992-present',
+            'out_prefix_tpl': 'mw-hydro_' + gn.PRODUCT_VERSION + '_gpcp-input_{prod}_dual_',
+            'out_subdir': 'gpcp_dual',
+            'initial_year': 1987,
+        },
     ]
 
-    all_rows = []
+    all_rows = [wrapper_row]
     for cfg in gpcp_configs:
         print(f'\n  -- {cfg["label"]} --')
         history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
@@ -596,8 +753,9 @@ def validate_gpcp():
             py_nc = run_python_netcdf_for_product(
                 prod_key, bin_file, imonth, VAL_YEAR, VAL_MONTH,
                 cfg['constellation'],
-                f'GPCP Monthly 2.5 Degree Rainfall (mm)',
-                history, summary, out_prefix, out_dir, gn.GRID_25
+                gn.PRODUCT_TITLES_25.get(prod_key, prod_key),
+                history, summary, out_prefix, out_dir, gn.GRID_25,
+                initial_year=cfg['initial_year']
             )
 
             # Step 2: Attribute checks (once per constellation)
@@ -838,6 +996,11 @@ def main():
               f'(NetCDF vs binary; {len(gpcp_passed)} products validated)')
 
     print('\nValidation complete.')
+    # Nonzero exit on any errored row (including the GPCP wrapper end-to-end
+    # check), so automation and review runs cannot mistake a failing validation
+    # for a passing one.
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

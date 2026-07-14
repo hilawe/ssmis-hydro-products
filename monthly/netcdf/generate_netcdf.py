@@ -506,26 +506,40 @@ def run_late_25deg(out_dir='2.5-deg/'):
                          dataset_name=os.path.basename(bin_file))
 
 
-def run_gpcp_late_netcdf(out_dir='2.5-deg/'):
-    """GPCP late constellation (f17/gpcp) NetCDF output."""
-    path_in = '../gpcp/'
-    initial_year = 1987
-    gpcp_files = {
-        'PR1': os.path.join(path_in, 'gpcp_nesdis_pr1.dat'),
-        'PR2': os.path.join(path_in, 'gpcp_nesdis_pr2.dat'),
-    }
-    # GPCP-specific short label (not the full chain history). Update the satellite
-    # token by hand at the WSF-M cutover; see the project documentation.
-    constellation = 'SSMIS F-17: January 1987-present'
-    title = 'GPCP Monthly 2.5 Degree Rainfall (mm)'
-    history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
-    summary = f'NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from {initial_year}-present.'
+def _run_gpcp_family_netcdf(tag, gpcp_files, initial_year, constellation, summary,
+                            out_dir='gpcp-input/'):
+    """Write one GPCP-input NetCDF family (late = F-17, early = F-16, or dual).
 
+    Files land in gpcp-input/ named
+        mw-hydro_{VERSION}_gpcp-input_{prod}_{tag}_{YYYYMM}.nc
+    matching the legacy IDL (gpcp_{late,early,dual}_netcdf.pro) and the
+    tar_mw-hydro_netcdf.sh 'gpcp-input' domain glob
+    (mw-hydro_{VERSION}_gpcp-input_*_{YYYYMM}.*), so the archive tar packages them.
+    Before this the three writers wrote to 2.5-deg/ with a gpcp_{tag}_{prod} prefix
+    that matched no tar glob, so none of the GPCP NetCDF was archived.
+
+    Each family writes PR1, PR2, and SSA. The legacy .pro files misnamed the PR2
+    output 'pr1' (outname(1) = ..._pr1_{tag}_), so a v01 gpcp-input carries PR2 data
+    in a PR1-named file with no real PR2; this uses the correct per-product name.
+
+    The 'late' = F-17 and 'early' = F-16 tags are the established GPCP convention
+    (separate from the 2.5/1.0-degree product _early_/_late_ labels) and are kept for
+    archive continuity. `initial_year` is the array/date origin (1987 for the F-17
+    timeline used by late and dual, 1992 for early); the dual's real coverage begins
+    1992 and is stated in `constellation`/`summary`, not the origin.
+    """
+    # Per-family history, preserving the legacy dual-specific wording (the dual
+    # family's history said "dual GPCP file"; late/early said "GPCP file").
+    if tag == 'dual':
+        history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF dual GPCP file.'
+    else:
+        history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
     lats, lons = make_coords(GRID_25)
     for prod_key, bin_file in gpcp_files.items():
         if not os.path.exists(bin_file):
             continue
-        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_late_{prod_key.lower()}_'
+        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp-input_{prod_key.lower()}_{tag}_'
+        nc_title   = PRODUCT_TITLES_25.get(prod_key, f'GPCP Monthly 2.5 Degree {prod_key}')
         n_months = get_n_months(bin_file, GRID_25)
 
         for imonth in range(n_months):
@@ -542,90 +556,59 @@ def run_gpcp_late_netcdf(out_dir='2.5-deg/'):
             ncfile = os.path.join(out_dir, f'{out_prefix}{year:04d}{mm}.nc')
             os.makedirs(out_dir, exist_ok=True)
             write_netcdf(ncfile, data, lats, lons, year, month, prod_key,
-                         title=title, initial_year=initial_year,
+                         title=nc_title, initial_year=initial_year,
                          constellation=constellation, history=history,
                          summary=summary,
                          dataset_name=os.path.basename(bin_file))
 
 
-def run_gpcp_early_netcdf(out_dir='2.5-deg/'):
-    """GPCP early constellation (f16) NetCDF output."""
+def run_gpcp_late_netcdf(out_dir='gpcp-input/'):
+    """GPCP late-convention (F-17 morning primary) NetCDF -> gpcp-input/."""
     path_in = '../gpcp/'
-    initial_year = 1992
-    gpcp_files = {
-        'PR1': os.path.join(path_in, 'gpcp_nesdis_f10_pr1.dat'),
-        'PR2': os.path.join(path_in, 'gpcp_nesdis_f10_pr2.dat'),
-    }
-    constellation = 'SSMIS F-16: January 1992-present'
-    title = 'GPCP Monthly 2.5 Degree Rainfall (mm) - Early'
-    history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
-    summary = f'NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from {initial_year}-present.'
-
-    lats, lons = make_coords(GRID_25)
-    for prod_key, bin_file in gpcp_files.items():
-        if not os.path.exists(bin_file):
-            continue
-        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_early_{prod_key.lower()}_'
-        n_months = get_n_months(bin_file, GRID_25)
-
-        for imonth in range(n_months):
-            year  = initial_year + imonth // 12
-            month = (imonth % 12) + 1
-            mm    = f'{month:02d}'
-
-            with open(bin_file, 'rb') as f:
-                f.seek(imonth * GRID_25['nlat'] * GRID_25['nlon'] * 4)
-                data = read_month(f, GRID_25)
-            if data is None or np.all(data <= -999.0):
-                continue
-
-            ncfile = os.path.join(out_dir, f'{out_prefix}{year:04d}{mm}.nc')
-            os.makedirs(out_dir, exist_ok=True)
-            write_netcdf(ncfile, data, lats, lons, year, month, prod_key,
-                         title=title, initial_year=initial_year,
-                         constellation=constellation, history=history,
-                         summary=summary,
-                         dataset_name=os.path.basename(bin_file))
+    _run_gpcp_family_netcdf(
+        'late',
+        {'PR1': os.path.join(path_in, 'gpcp_nesdis_pr1.dat'),
+         'PR2': os.path.join(path_in, 'gpcp_nesdis_pr2.dat'),
+         'SSA': os.path.join(path_in, 'gpcp_nesdis_ssa.dat')},
+        initial_year=1987,
+        # GPCP-specific short label. Update the satellite token by hand at the WSF-M
+        # cutover; see the project documentation.
+        constellation='SSMIS F-17: January 1987-present',
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1987-present.',
+        out_dir=out_dir)
 
 
-def run_gpcp_dual_netcdf(out_dir='2.5-deg/'):
-    """GPCP dual-satellite merged NetCDF output."""
+def run_gpcp_early_netcdf(out_dir='gpcp-input/'):
+    """GPCP early-convention (F-16 late-morning primary) NetCDF -> gpcp-input/."""
     path_in = '../gpcp/'
-    initial_year = 1987
-    gpcp_files = {
-        'PR1': os.path.join(path_in, 'gpcp_nesdis_dual_pr1.dat'),
-        'PR2': os.path.join(path_in, 'gpcp_nesdis_dual_pr2.dat'),
-    }
-    constellation = 'SSMIS F-17 and F-16 merged; January 1992-present'
-    title = 'GPCP Monthly 2.5 Degree Rainfall (mm) - Dual Satellite'
-    history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF dual GPCP file.'
-    summary = f'NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Dual Satellite Products from {initial_year}-present.'
+    _run_gpcp_family_netcdf(
+        'early',
+        {'PR1': os.path.join(path_in, 'gpcp_nesdis_f10_pr1.dat'),
+         'PR2': os.path.join(path_in, 'gpcp_nesdis_f10_pr2.dat'),
+         'SSA': os.path.join(path_in, 'gpcp_nesdis_f10_ssa.dat')},
+        initial_year=1992,
+        constellation='SSMIS F-16: January 1992-present',
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1992-present.',
+        out_dir=out_dir)
 
-    lats, lons = make_coords(GRID_25)
-    for prod_key, bin_file in gpcp_files.items():
-        if not os.path.exists(bin_file):
-            continue
-        out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp_dual_{prod_key.lower()}_'
-        n_months = get_n_months(bin_file, GRID_25)
 
-        for imonth in range(n_months):
-            year  = initial_year + imonth // 12
-            month = (imonth % 12) + 1
-            mm    = f'{month:02d}'
+def run_gpcp_dual_netcdf(out_dir='gpcp-input/'):
+    """GPCP dual-satellite merged NetCDF -> gpcp-input/.
 
-            with open(bin_file, 'rb') as f:
-                f.seek(imonth * GRID_25['nlat'] * GRID_25['nlon'] * 4)
-                data = read_month(f, GRID_25)
-            if data is None or np.all(data <= -999.0):
-                continue
-
-            ncfile = os.path.join(out_dir, f'{out_prefix}{year:04d}{mm}.nc')
-            os.makedirs(out_dir, exist_ok=True)
-            write_netcdf(ncfile, data, lats, lons, year, month, prod_key,
-                         title=title, initial_year=initial_year,
-                         constellation=constellation, history=history,
-                         summary=summary,
-                         dataset_name=os.path.basename(bin_file))
+    Array/date origin is 1987 (the F-17 timeline, matching the uniform Python
+    REF_DATE), so idx 473 -> June 2026. Dual coverage begins 1992 when F-16 joins;
+    that is stated in the metadata rather than the indexing origin.
+    """
+    path_in = '../gpcp/'
+    _run_gpcp_family_netcdf(
+        'dual',
+        {'PR1': os.path.join(path_in, 'gpcp_nesdis_dual_pr1.dat'),
+         'PR2': os.path.join(path_in, 'gpcp_nesdis_dual_pr2.dat'),
+         'SSA': os.path.join(path_in, 'gpcp_nesdis_dual_ssa.dat')},
+        initial_year=1987,
+        constellation='SSMIS F-17 and F-16 merged; January 1992-present',
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Dual Satellite Products from 1992-present.',
+        out_dir=out_dir)
 
 
 def run_early_1deg(out_dir='1.0-deg/'):
