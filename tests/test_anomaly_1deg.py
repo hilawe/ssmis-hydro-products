@@ -247,3 +247,53 @@ def test_baseline_desc_reports_passed_window():
     assert "29 yr" in rmi._baseline_desc((1991, 2020), 29)
     assert "2009-2020" in rmi._baseline_desc((2009, 2020), 12)
     assert "SSMIS era" in rmi._baseline_desc((2009, 2020), 12)
+
+
+def test_snow_anomaly_gates_sparse_current(tmp_path, capsys):
+    # The snow 1.0-degree anomaly branch must apply the same MIN_VALID_FRAC
+    # floor as the baseline (multi-model review find): a sparse current month
+    # must NOT be differenced against the gated WMO baseline. We call the
+    # branch condition directly: _month_is_valid on a sparse grid is False, so
+    # the 1.0-degree anomaly branch is skipped.
+    sparse = _grid(FILL)
+    sparse[0, :10] = 0.5
+    sparse[sparse <= -999.0] = np.nan
+    assert not rmi._month_is_valid(sparse)
+    healthy = _grid(0.5)
+    assert rmi._month_is_valid(healthy)
+
+
+def test_snow_mixed_resolution_fallback_policy(tmp_path, monkeypatch):
+    # PINS A DELIBERATE POLICY (do not "fix" without an owner decision): when
+    # the 1.0-degree current snow field renders but its 1.0-degree baseline
+    # declines (fewer than MIN_BASELINE_YEARS, e.g. a future satellite's first
+    # years), gen_snw falls back to the 2.5-degree anomaly beside the
+    # 1.0-degree field panels - a mixed-resolution figure with an honest
+    # non-WMO label - rather than the placeholder ICE uses. plot_polar_4panel
+    # takes separate field/anomaly coordinate arrays for exactly this case.
+    root = str(tmp_path)
+    sat = rmi.NCDC_BIN_SAT
+    os.makedirs(os.path.join(root, f"{sat}-1.0"))
+    os.makedirs(os.path.join(root, "ncdc-bin"))
+    os.makedirs(os.path.join(root, f"{sat}-2.5"))
+    may0 = 4
+    # healthy 1.0-degree current month, but too few baseline years (2 < 6)
+    _write_year(os.path.join(root, f"{sat}-1.0", f"SNW.26-{sat}-1.0"),
+                {may0: _grid(0.5)})
+    _seed_baseline(os.path.join(root, "ncdc-bin"), "SNW",
+                   {2010: 0.4, 2011: 0.6}, may0)
+    captured = {}
+    def fake_plot(data, anom, header_title, cmap, levels, anom_cmap,
+                  anom_levels, cbar_label, anom_label, outpath, **kw):
+        captured.update(kw, anom=anom, data=data, anom_label=anom_label)
+        return None
+    monkeypatch.setattr(rmi, "plot_polar_4panel", fake_plot)
+    rmi.gen_snw(sat, "26", "05", str(tmp_path), root)
+    # field stayed 1.0-degree
+    assert captured["snw_lons"] is rmi.LONS_1
+    assert captured["data"].shape == (rmi.N_LAT_1, rmi.N_LON_1)
+    # the 1.0-degree anomaly declined (baseline below MIN_BASELINE_YEARS) and
+    # no 2.5-degree data exists in this sandbox, so the anomaly is None with
+    # the neutral label - crucially NOT a WMO-labeled 1.0-degree anomaly
+    assert captured["anom"] is None
+    assert "WMO" not in captured["anom_label"]

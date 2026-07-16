@@ -737,11 +737,13 @@ def read_current_1deg(indir, sat, prod, yy, mm):
 
     Called by: gen_ice, gen_wvp_anom
     """
-    yr4 = int(_year4_from_yy(yy)) if len(str(yy)) <= 2 else int(yy)
+    yr4 = int(yy) if int(yy) >= 100 else int(_year4_from_yy(yy))
     if yr4 in BAD_1DEG_YEARS.get(prod, ()):
         print(f'  {prod} {yr4} is a documented-bad 1.0° year; no image written')
         return None
-    grid = read_prod_1deg(indir, sat, prod, yy, mm)
+    # quiet: this function prints the one decisive line below, so the inner
+    # reader stays silent instead of emitting a near-duplicate message first.
+    grid = read_prod_1deg(indir, sat, prod, yy, mm, quiet=True)
     if not _month_is_valid(grid):
         print(f'  1.0° {prod} field missing or too sparse for {sat} {yy}-{mm}; '
               f'no image written')
@@ -749,7 +751,7 @@ def read_current_1deg(indir, sat, prod, yy, mm):
     return grid
 
 
-def read_prod_1deg(indir, sat, prod, yy, mm):
+def read_prod_1deg(indir, sat, prod, yy, mm, quiet=False):
     """
     Read one month's field for a product from the 1.0-degree per-year combined
     binary file.  For SNW this replicates what the operational GrADS snow_4.gs
@@ -789,7 +791,7 @@ def read_prod_1deg(indir, sat, prod, yy, mm):
     """
     fpath = os.path.join(indir, f'{sat}-1.0', f'{prod}.{yy}-{sat}-1.0')
     grid = _read_1deg_month(fpath, int(mm) - 1)
-    if grid is None:
+    if grid is None and not quiet:
         print(f'  1.0° {prod} file missing, too short, or month empty: {fpath}')
     return grid
 
@@ -1623,6 +1625,12 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
             )
             ax.gridlines(linewidth=0.3, alpha=0.4, color='grey', linestyle='--')
 
+        if not HAS_CARTOPY:
+            # Degraded (no-cartopy) mode draws plain Cartesian axes; without an
+            # equal aspect a 360-lon x 60-lat extent is stretched to the square
+            # panel. Ops hosts have cartopy, so this only affects diagnostics.
+            ax.set_aspect('equal')
+
         ax.set_title(title, fontsize=9, fontweight='bold')
 
         if field is None:
@@ -1706,6 +1714,10 @@ def gen_pr1(sat, yy, mm, outdir, indir):
     outpath      = os.path.join(outdir, f'{mon_name}{yy}-ra-25prod.gif')
     return plot_global(data, 'ra', header_title,
                        PR1_CMAP, PR1_LEVELS, 'mm/day', outpath,
+                       # PR1's set_under lavender (GrADS 53, land / <1 mm/day) is
+                       # painted on the map, so the colorbar needs the lower
+                       # arrow too or the legend leaves that color undocumented.
+                       extend='both',
                        lat_range=(-50, 50))
 
 
@@ -1845,7 +1857,14 @@ def gen_snw(sat, yy, mm, outdir, indir):
     # fallback figure never carries a WMO claim in its title (see
     # plot_polar_4panel's subtitle parameter).
     anom_subtitle = None
-    if snw_lons is LONS_1:               # current field is 1.0-degree
+    # The anomaly branch applies the same MIN_VALID_FRAC floor the baseline
+    # years pass through (_month_is_valid), so a partially-written 1.0-degree
+    # month is never differenced against the gated WMO baseline (the round-2
+    # symmetric-gating principle; this was the one current-field path that
+    # still bypassed it, found by the multi-model review). The FIELD panels
+    # still render whatever the month holds - only the anomaly declines, and
+    # control then falls to the honestly-labeled 2.5-degree path below.
+    if snw_lons is LONS_1 and _month_is_valid(data):   # gated 1.0-degree field
         _b0, _b1 = ANOM_BASELINE['SNW']
         clim_1deg, n_base = _compute_climatology_1deg(
             indir, sat, 'SNW', mon_idx, baseline_start=_b0, baseline_end=_b1)
@@ -1870,6 +1889,14 @@ def gen_snw(sat, yy, mm, outdir, indir):
         # That 2.5-degree combined baseline only reaches ~2008 for the morning
         # chain, so it is NOT the WMO normal; the label is set accordingly to
         # avoid mislabeling the fallback image.
+        #
+        # DELIBERATE POLICY: when the 1.0-degree current field rendered but its
+        # baseline declined (a satellite's early years, e.g. a future WSF-M with
+        # fewer than MIN_BASELINE_YEARS of history), this produces a MIXED figure:
+        # 1.0-degree field panels beside a 2.5-degree anomaly, each drawn on its
+        # own coordinate arrays (plot_polar_4panel takes them separately for
+        # exactly this reason). Snow prefers rendering-with-honest-label over the
+        # placeholder ICE uses; pinned by a regression test.
         fpath_25 = os.path.join(indir, f'{sat}-2.5', f'SNW{yy}-{mm}-{sat}-2.5')
         data_25  = read_grads_binary(fpath_25)
         clim_25  = _compute_snow_climatology(indir, sat, mon_idx,
