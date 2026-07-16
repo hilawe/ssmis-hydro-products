@@ -41,14 +41,27 @@ INPUT BINARY FILES (GrADS format)
     Binary layout: float32, south-first lat, 1.25°E-first lon, lon-fastest.
     Grid: N_LAT=72 × N_LON=144 = 10,368 elements per file.
 
+    1.0-degree yearly binaries (12 months per file, 360 lon × 180 lat,
+    south-first, 0.5°E-first, lon-fastest), used by the snow panels and
+    the ICE / WVP anomaly diagnostics:
+      {indir}/{sat}-1.0/{PROD}.{yy}-{sat}-1.0   (current month + f16/f18 baseline)
+      {indir}/ncdc-bin/{PROD}.{YY}              (morning-chain baseline, f17)
+    An isolated --indir that lacks these renders the snow panels via their
+    2.5-degree fallback and SKIPS the ICE and WVP-anomaly images (they have no
+    2.5-degree fallback by design; watch stdout for the decline messages).
+
 OUTPUT
     GIF files (PNG fallback if Pillow not installed) in --outdir/{sat}/, named:
       Mon{YY}-ra-25prod.gif  (e.g., img/f17/Mar26-ra-25prod.gif)
       Mon{YY}-lw-25prod.gif
       Mon{YY}-ta-25prod.gif
-      Mon{YY}-sn-25prod.gif  (4-panel: NH+NH-anom top, SH+SH-anom bottom)
+      Mon{YY}-sn-25prod.gif       (4-panel: NH+NH-anom top, SH+SH-anom bottom)
+      Mon{YY}-ic-25prod.gif       (4-panel sea ice + anomaly, ±50° panels,
+                                   SSMIS-era 2009-2020 baseline)
+      Mon{YY}-ta-anom-25prod.gif  (global WVP anomaly vs WMO 1991-2020 baseline)
     Each satellite (f17, f16, f18) writes to its own subdirectory, mirroring
-    the operational structure at grads/img/{sat}/.
+    the operational structure at grads/img/{sat}/.  The ic and ta-anom images
+    are 1.0-degree diagnostics and are NOT part of the NCEI archive tar below.
 
     If --archive-dir is given, f17 imagery is ALSO written to that directory
     using the NCEI archive naming convention (used by tar_mw-hydro_netcdf.sh):
@@ -281,7 +294,7 @@ NCDC_BIN_SAT = 'f17'
 
 def _year4_from_yy(yy):
     """Expand a 2-digit year to 4 digits using the pipeline's calendar rule
-    (same as ncdc-bin/{PROD}.{YY} and _compute_snow_climatology_1deg):
+    (same as ncdc-bin/{PROD}.{YY} and _compute_climatology_1deg):
     87-99 -> 1987-1999, 00-86 -> 2000-2086. For every currently renderable
     month (2001 onward) this returns exactly what the former '20'+yy hardcode
     did; it only differs for pre-2000 years, which the fixed '20' prefix would
@@ -515,6 +528,165 @@ ANOM_CMAP   = build_cmap(_ANOM_INTERVAL_CCOLS, _ANOM_OVER)
 ANOM_CMAP.set_under(_rgb_f(79))   # dark brown for departures below -35 %pts
                                    # (overrides the default white set_under)
 
+# ---------------------------------------------------------------------------
+# ICE: 10 clevs -> 9 intervals + 1 overflow = 10 ccols (+1 under = 11 total)
+# GrADS reference (ice.gs): 'set clevs 10 20 30 40 50 60 70 80 90 100'
+#                           'set ccols 0 21 31 32 34 43 45 47 54 56 59'
+# ice.gs colors the first interval 21 on the NH panel and 22 on the SH panel.
+# This figure deliberately uses the NH value in both hemispheres, so the two
+# panels share one colorbar convention: the per-hemisphere difference is a
+# legacy quirk of two hand-written GrADS blocks, and this is a new figure that
+# replicates no existing archive deliverable, so nothing depends on matching it.
+# The 1.0-degree ICE archive stores percent directly (observed range 0 to ~103,
+# the >100 tail being cells where the pass-count normalization slightly exceeds
+# unity), so these levels are read in percent with no scaling.
+# ---------------------------------------------------------------------------
+ICE_LEVELS  = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+ICE_CCOLS   = [21, 31, 32, 34, 43, 45, 47, 54, 56]   # 9 interval colors
+ICE_OVER    = 59
+ICE_CMAP    = build_cmap(ICE_CCOLS, ICE_OVER)
+
+# ---------------------------------------------------------------------------
+# WVP anomaly levels are in mm, not % points, so they cannot reuse ANOM_LEVELS
+# (±35 %pts), which would render a WVP anomaly field almost entirely within the
+# single near-normal band.  Measured over the 1.0-degree ncdc-bin record, a
+# monthly WVP departure from the 1991-2020 normal spans about -12 to +20 mm,
+# with a 1st-to-99th-percentile range near -5 to +11 mm, so ±8 mm resolves the
+# bulk of the field and leaves the tails to the under/over colors.  The colormap
+# is shared with the snow and ice anomaly (brown below normal, green above).
+# ---------------------------------------------------------------------------
+WVP_ANOM_LEVELS = [-8, -6, -4, -2, 2, 4, 6, 8]
+
+# ---------------------------------------------------------------------------
+# Anomaly display scaling, per product.  The three 1.0-degree anomaly products
+# do NOT share a storage scale, and this table is the one place that records it:
+#   SNW  stored as a 0-1 fraction -> ×100 yields % points, matching snow_4.gs
+#                                     ('percent = 100*(current-meanval)')
+#   ICE  stored as percent already -> ×1, the departure is already in % points
+#   WVP  stored in mm -> ×1, the departure is in mm
+# Applying the snow factor to ICE or WVP would inflate their anomalies 100-fold.
+# ---------------------------------------------------------------------------
+ANOM_SCALE = {'SNW': 100.0, 'ICE': 1.0, 'WVP': 1.0}
+
+# ---------------------------------------------------------------------------
+# Known-bad years in the 1.0-degree archive, excluded from any climatology.
+#
+# ncdc-bin/WVP.98 holds ~8.9 mm in all twelve months where 1997 and 1999 hold
+# ~25 mm, with a normal valid-cell count, so its cells carry wrong values
+# rather than fill and no emptiness check catches them.  The archived
+# 2.5-degree NetCDF for the same months is correct (May 1998: 25.26 mm early,
+# 25.38 mm late), so the defect is specific to this 1.0-degree file and does
+# not affect the published 2.5-degree record or the paper's WVP comparison.
+# Left in the average, it drags the 1991-2020 WVP normal down by roughly
+# 0.55 mm at every ocean cell, which would surface as a spurious +0.55 mm
+# anomaly in every month rendered against it.  The 1.0-degree archive cannot be
+# regenerated (the pre-1998 antenna-temperature inputs no longer exist on
+# disk), so the year is excluded here rather than repaired.
+#
+# This is a deliberate, per-year list backed by that evidence, NOT an automatic
+# outlier filter.  A genuinely extreme year (a strong ENSO, a volcanic signal)
+# belongs in a climate normal, so only a defect this well characterized is
+# removed, and removing one is a code change that gets reviewed.
+# Only the morning chain reaches 1998 (the per-satellite F-16/F-18 1.0-degree
+# files begin in 2006), so in practice this bites only the ncdc-bin baseline.
+# ---------------------------------------------------------------------------
+BAD_1DEG_YEARS = {'WVP': frozenset({1998})}
+
+# Minimum fraction of grid cells a 1.0-degree month must fill to be treated as a
+# real observation rather than a partially-written or near-empty slot.  Applied
+# symmetrically: to each baseline year AND to the current month, so a current
+# field is never differenced against a baseline it would not itself qualify for.
+# 2% of the 64,800-cell grid is ~1,296 cells, comfortably below the smallest
+# real product domain (snow ~29%, WVP ~51%, ice ~62%) and above a stray handful
+# of cells in a month that was caught mid-write.
+MIN_VALID_FRAC = 0.02
+
+
+def _month_is_valid(grid):
+    """True if a 1.0-degree month grid has at least MIN_VALID_FRAC real cells.
+
+    The single integrity floor used for both the baseline years and the current
+    field, so the two are gated on the same rule.  A None grid (missing/short/
+    all-fill, already screened by _read_1deg_month) is not valid.
+    """
+    if grid is None:
+        return False
+    return np.count_nonzero(~np.isnan(grid)) >= grid.size * MIN_VALID_FRAC
+
+# ---------------------------------------------------------------------------
+# Anomaly baseline window, per product.  These are NOT interchangeable.
+#
+# SNW and WVP use the WMO 1991-2020 normal, which is the point of computing the
+# anomaly from the 1.0-degree archive at all: it reaches back to 1987, where the
+# 2.5-degree combined bins only reach 2008.  Both products cross the 2008/2009
+# SSM/I -> SSMIS sensor transition without a step (WVP holds ~30 mm either side;
+# the snow series declines monotonically across the satellite epochs, a check
+# the v02 paper also makes for its snow trend), so averaging across the
+# transition is sound for them.
+#
+# ICE cannot use that window.  Its concentration steps sharply at the same
+# transition, and the step grows poleward.  Measured over ncdc-bin May fields,
+# SSM/I era (1992-2008) vs SSMIS era (2009-2020) means:
+#     50-60N  -0.9    70-75N  -6.1    83-86N  -14.2    88-90N  -32.9
+# Every SSM/I year reads exactly 100.00 poleward of 80N while every SSMIS year
+# reads 65-92, and the change is a cliff between 2006 and 2009 rather than a
+# trend, so it is sensor-dependent, not ice loss.  A 1991-2020 ICE baseline
+# would average 18 SSM/I years against 11 SSMIS years into a hybrid normal that
+# matches neither sensor, and differencing a current SSMIS month against it
+# would paint 20-30 points of pure artifact across the central Arctic that
+# reads as ice loss.  Masking a polar cap does not rescue it, because the step
+# reaches down into the marginal ice zone.  So ICE is referenced to an
+# SSMIS-only window instead: shorter, but sensor-self-consistent and honestly
+# labeled.  2009 is the F-17 record start and also the start of the era the v02
+# paper's own ICE/NSIDC-0079 validation uses.
+#
+# Scope of the ICE step: it affects CONCENTRATION anomalies only.  The paper's
+# sea-ice EXTENT series (Fig. 5) thresholds at 15% concentration, which is
+# insensitive to a 100->65 shift deep in the pack; the extent computed from the
+# paper's own 2.5-degree NetCDF runs 10.09 (Mar 2008, SSM/I) to 10.03 (Mar 2009,
+# SSMIS), a change well inside the ±0.4 interannual spread, so that trend and
+# the paper's SSMIS-era validation are unaffected by this.
+#
+# Decided by Hilawe 2026-07-16 after the step was quantified.  A genuine 30-year
+# ICE normal needs inter-sensor homogenization, which is a research task and is
+# a separate research task, not attempted here.
+# ---------------------------------------------------------------------------
+ANOM_BASELINE = {
+    'SNW': (1991, 2020),
+    'WVP': (1991, 2020),
+    'ICE': (2009, 2020),
+}
+
+
+def _baseline_desc(baseline, n_base):
+    """
+    Describe the baseline a figure was actually computed against, for colorbar
+    labels and titles.
+
+    Takes the (start, end) window the caller ACTUALLY passed to
+    _compute_climatology_1deg rather than re-reading ANOM_BASELINE, so a caller
+    that overrides the window cannot end up with a label naming the default one.
+    The whole point of this figure family is that the label states the baseline
+    behind the number, so the label must not be able to drift from it.
+
+    Reports the REALIZED year count rather than the nominal window length: the
+    morning primary covers 29 of the 30 WMO years for snow, while the late
+    chain covers far fewer, and a label implying a full 30-year normal for
+    every satellite would overstate what is behind the number.
+
+    Parameters
+    ----------
+    baseline : tuple
+        (start_year, end_year) as passed to _compute_climatology_1deg.
+    n_base : int
+        Number of years that actually contributed.
+
+    Called by: gen_snw, gen_ice, gen_wvp_anom
+    """
+    b0, b1 = baseline
+    tag = 'WMO' if (b0, b1) == (1991, 2020) else 'SSMIS era'
+    return f'{b0}-{b1} mean ({tag}, {n_base} yr)'
+
 
 # ---------------------------------------------------------------------------
 # Binary file readers
@@ -550,19 +722,47 @@ def read_grads_binary(fpath):
     return grid
 
 
-def read_snw_1deg(indir, sat, yy, mm):
+def read_current_1deg(indir, sat, prod, yy, mm):
     """
-    Read one month's snow-fraction field from the 1.0-degree per-year combined
-    binary file, replicating what the operational GrADS snow_4.gs reads via
-    snow_mon_10.ctl.
+    Read the current month's 1.0-degree field for an anomaly figure, applying
+    the SAME gates the baseline applies: the MIN_VALID_FRAC integrity floor and
+    the BAD_1DEG_YEARS exclusion.  Returns the grid, or None with a printed
+    reason if the month is missing, too sparse, or a documented-bad product-year.
 
-    The operational CTL (snow_mon_10.ctl) points to:
+    This is why gen_ice and gen_wvp_anom use it instead of read_prod_1deg: an
+    anomaly must never difference a current field that would itself fail the
+    baseline's admission test (a partially-written month), and must never render
+    a known-corrupt year (e.g. WVP 1998) as the current field against a baseline
+    that correctly excluded it.
+
+    Called by: gen_ice, gen_wvp_anom
+    """
+    yr4 = int(_year4_from_yy(yy)) if len(str(yy)) <= 2 else int(yy)
+    if yr4 in BAD_1DEG_YEARS.get(prod, ()):
+        print(f'  {prod} {yr4} is a documented-bad 1.0° year; no image written')
+        return None
+    grid = read_prod_1deg(indir, sat, prod, yy, mm)
+    if not _month_is_valid(grid):
+        print(f'  1.0° {prod} field missing or too sparse for {sat} {yy}-{mm}; '
+              f'no image written')
+        return None
+    return grid
+
+
+def read_prod_1deg(indir, sat, prod, yy, mm):
+    """
+    Read one month's field for a product from the 1.0-degree per-year combined
+    binary file.  For SNW this replicates what the operational GrADS snow_4.gs
+    reads via snow_mon_10.ctl.
+
+    The operational snow CTL (snow_mon_10.ctl) points to:
         f17-1.0/SNW.{yy}-f17-1.0
     This is the yearly combined file written by combine.py (combine_10deg()),
     containing 12 months × (N_LON_1 * N_LAT_1) = 12 × 64,800 float32 values.
-    Grid layout (from CTL): XDEF 360 LINEAR -0.5 1.0  /  YDEF 180 LINEAR -89.5 1.0
+    Grid layout: 360 lon × 180 lat, first column 0.5°E, south-first.
+    ICE and WVP use the identical layout under the same {sat}-1.0 directory.
 
-    Using 1.0° data for the snow panels eliminates the large blocky cell-edge
+    Using 1.0° data for the polar panels eliminates the large blocky cell-edge
     holes and oversmoothing that appear when using the 2.5° per-month binary,
     because there are 4× as many grid cells to interpolate over.
 
@@ -572,6 +772,8 @@ def read_snw_1deg(indir, sat, yy, mm):
         Root monthly directory (one level above {sat}-1.0/).
     sat : str
         Satellite identifier (e.g. 'f17').
+    prod : str
+        Product code as it appears in the filename ('SNW', 'ICE', 'WVP').
     yy : str
         Two-digit year string (e.g. '26' for 2026).
     mm : str
@@ -580,14 +782,15 @@ def read_snw_1deg(indir, sat, yy, mm):
     Returns
     -------
     grid : ndarray (N_LAT_1, N_LON_1) = (180, 360) float32, or None.
-        Snow fraction with NaN where fill (-999.99).
+        Product field in its stored units (SNW fraction, ICE percent, WVP mm),
+        with NaN where fill (-999.99).
 
-    Called by: gen_snw
+    Called by: gen_snw, gen_ice, gen_wvp_anom
     """
-    fpath = os.path.join(indir, f'{sat}-1.0', f'SNW.{yy}-{sat}-1.0')
+    fpath = os.path.join(indir, f'{sat}-1.0', f'{prod}.{yy}-{sat}-1.0')
     grid = _read_1deg_month(fpath, int(mm) - 1)
     if grid is None:
-        print(f'  1.0° snow file missing, too short, or month empty: {fpath}')
+        print(f'  1.0° {prod} file missing, too short, or month empty: {fpath}')
     return grid
 
 
@@ -595,8 +798,8 @@ def _read_1deg_month(fpath, mon_0based):
     """
     Read one calendar month from a 12-month 1.0-degree yearly binary.
 
-    Shared by read_snw_1deg (per-satellite {sat}-1.0/SNW.{yy}-{sat}-1.0 files)
-    and _compute_snow_climatology_1deg (the ncdc-bin/{PROD}.{YY} morning-chain
+    Shared by read_prod_1deg (per-satellite {sat}-1.0/{PROD}.{yy}-{sat}-1.0 files)
+    and _compute_climatology_1deg (the ncdc-bin/{PROD}.{YY} morning-chain
     archive).  Both use the identical layout: 12 consecutive months, each
     N_LON_1*N_LAT_1 = 64,800 float32 values in GrADS (N_LAT_1, N_LON_1) order
     (south-first, 0.5°E-first, lon fastest).
@@ -728,7 +931,7 @@ def _compute_snow_climatology(indir, sat, cal_month_0based,
     """
     2.5-degree monthly snow-cover climatology from the combined multi-year
     binary. FALLBACK ONLY: gen_snw now computes the anomaly at 1.0-degree via
-    _compute_snow_climatology_1deg, and only calls this when the 1.0-degree
+    _compute_climatology_1deg, and only calls this when the 1.0-degree
     field or baseline is unavailable.
 
     IMPORTANT, why this is a fallback and not the primary: the 2.5-degree
@@ -738,7 +941,7 @@ def _compute_snow_climatology(indir, sat, cal_month_0based,
     roughly 2008-2020 for the morning chain, i.e. a ~13-year average, NOT the
     30-year normal. gen_snw therefore labels the fallback anomaly with a
     non-WMO caption. The genuine 1991-2020 baseline lives in the 1.0-degree
-    ncdc-bin archive and is used by _compute_snow_climatology_1deg.
+    ncdc-bin archive and is used by _compute_climatology_1deg.
 
     Replicates the GrADS snow_4.gs definition:
       'define meanval = ave(maskout(sn, sn), t=startmon, t=endmon, 1yr)'
@@ -798,26 +1001,43 @@ def _compute_snow_climatology(indir, sat, cal_month_0based,
     return clim
 
 
-def _compute_snow_climatology_1deg(indir, sat, cal_month_0based,
-                                   baseline_start=1991, baseline_end=2020):
+# A climatology built from very few years is not a normal in any useful sense
+# and an anomaly against it is dominated by the interannual noise of those years.
+# Require at least this many contributing years, else decline the anomaly (the
+# panel then renders its 'Climatology unavailable' placeholder). Six is a
+# pragmatic floor: below it the "mean" is barely distinguishable from a single
+# year, while the shortest baseline actually shipped (f18, 11 years) clears it.
+MIN_BASELINE_YEARS = 6
+
+
+def _compute_climatology_1deg(indir, sat, prod, cal_month_0based,
+                              baseline_start=1991, baseline_end=2020):
     """
-    Compute the WMO 1991-2020 monthly snow-cover climatology at 1.0-degree,
+    Compute the WMO 1991-2020 monthly climatology for a product at 1.0-degree,
     from the same 1.0-degree series used for the display panels.
 
-    This supersedes _compute_snow_climatology (which reads the 2.5-degree
-    combined bins).  Those 2.5-degree combined files only hold valid data from
-    2008 onward (morning chain), so their "1991-2020" baseline was in practice a
-    ~2008-2020 average.  Computing the whole anomaly at 1.0-degree from a series
-    that reaches back to 1987 gives a genuine WMO normal, and keeps the baseline
-    and the current-month field at the same resolution (no 1.0-vs-2.5 mixing).
+    For SNW this supersedes _compute_snow_climatology (which reads the
+    2.5-degree combined bins).  Those 2.5-degree combined files only hold valid
+    data from 2008 onward (morning chain), so their "1991-2020" baseline was in
+    practice a ~2008-2020 average.  Computing the whole anomaly at 1.0-degree
+    from a series that reaches back to 1987 gives a genuine WMO normal, and
+    keeps the baseline and the current-month field at the same resolution (no
+    1.0-vs-2.5 mixing).  ICE and WVP have the same 29-of-30-year coverage in
+    ncdc-bin and use this function on the same terms.
+
+    The returned climatology is in the product's STORED units (SNW fraction,
+    ICE percent, WVP mm).  Converting a departure to display units is the
+    caller's job, via ANOM_SCALE (the three products do not share a scale).
 
     Baseline source by chain:
       - Morning chain (NCDC_BIN_SAT, currently F-17): the ncdc-bin archive
-        ncdc-bin/SNW.{YY}, F-08 -> F-17, real data for 29 of the 30 years
-        1991-2020 (only Jan 1991 absent, the F-08/F-11 handover).
+        ncdc-bin/{PROD}.{YY}, F-08 -> F-17, real data for 29 of the 30 years
+        1991-2020 (only Jan 1991 absent, the F-08/F-11 handover).  Verified for
+        SNW, ICE and WVP.
       - Other satellites (F-16 late chain, F-18): their own per-year 1.0-degree
-        files {sat}-1.0/SNW.{yy}-{sat}-1.0, which currently begin in 2006.  Each
-        satellite uses only its own chain, so no cross-chain calibration mixing.
+        files {sat}-1.0/{PROD}.{yy}-{sat}-1.0, which currently begin in 2006.
+        Each satellite uses only its own chain, so no cross-chain calibration
+        mixing.
 
     Years whose file is absent, or whose requested month is fill/empty (fewer
     than 2% valid cells), are skipped; the climatology is the nanmean of the
@@ -834,6 +1054,8 @@ def _compute_snow_climatology_1deg(indir, sat, cal_month_0based,
         Root monthly directory (holds ncdc-bin/ and {sat}-1.0/).
     sat : str
         Satellite identifier ('f17', 'f16', 'f18').
+    prod : str
+        Product code as it appears in the filename ('SNW', 'ICE', 'WVP').
     cal_month_0based : int
         Calendar-month index (0=Jan ... 11=Dec).
     baseline_start, baseline_end : int
@@ -842,27 +1064,34 @@ def _compute_snow_climatology_1deg(indir, sat, cal_month_0based,
     Returns
     -------
     (clim, n_years) : (ndarray (N_LAT_1, N_LON_1) float32, int), or (None, 0)
-        Climatological-mean snow fraction and the number of contributing years.
+        Climatological mean in the product's stored units, and the number of
+        contributing years.
 
-    Called by: gen_snw
+    Called by: gen_snw, gen_ice, gen_wvp_anom
     """
-    cells = N_LON_1 * N_LAT_1
     grids = []
+    excluded = []
     for yr in range(baseline_start, baseline_end + 1):
         yy2 = yr % 100
         if sat == NCDC_BIN_SAT:
-            fpath = os.path.join(indir, 'ncdc-bin', f'SNW.{yy2:02d}')
+            fpath = os.path.join(indir, 'ncdc-bin', f'{prod}.{yy2:02d}')
         else:
-            fpath = os.path.join(indir, f'{sat}-1.0', f'SNW.{yy2:02d}-{sat}-1.0')
+            fpath = os.path.join(indir, f'{sat}-1.0', f'{prod}.{yy2:02d}-{sat}-1.0')
         grid = _read_1deg_month(fpath, cal_month_0based)
-        if grid is None:
+        if not _month_is_valid(grid):
+            continue    # missing, or too sparse to be a real observed month
+        if yr in BAD_1DEG_YEARS.get(prod, ()):
+            # Documented archive defect, not a data gap; see BAD_1DEG_YEARS.
+            # Tested here, after the year is known to hold real data, so the
+            # exclusion is only reported when it actually removed something (a
+            # satellite whose record starts after the bad year never had it).
+            excluded.append(yr)
             continue
-        if np.count_nonzero(~np.isnan(grid)) < cells * 0.02:
-            continue    # month present but empty/fill (e.g. pre-launch year)
         grids.append(grid)
 
-    if not grids:
-        print(f'  1.0° climatology: no baseline months found for {sat}')
+    if len(grids) < MIN_BASELINE_YEARS:
+        print(f'  1.0° {prod} climatology: only {len(grids)} valid baseline '
+              f'year(s) for {sat} (need {MIN_BASELINE_YEARS}); declining anomaly')
         return None, 0
     with warnings.catch_warnings():
         # Cells with no valid baseline year nanmean to NaN (correct); silence only
@@ -871,9 +1100,10 @@ def _compute_snow_climatology_1deg(indir, sat, cal_month_0based,
         warnings.filterwarnings('ignore', message='Mean of empty slice')
         clim = np.nanmean(np.stack(grids, axis=0), axis=0).astype(np.float32)
     src = 'ncdc-bin' if sat == NCDC_BIN_SAT else f'{sat}-1.0'
-    print(f'  1.0° climatology: averaged {len(grids)} years '
+    excl = f', excluding {sorted(excluded)} as known-bad' if excluded else ''
+    print(f'  1.0° {prod} climatology: averaged {len(grids)} years '
           f'({baseline_start}-{baseline_end}, {src}) for {sat} '
-          f'month {cal_month_0based+1:02d}')
+          f'month {cal_month_0based+1:02d}{excl}')
     return clim, len(grids)
 
 
@@ -1011,7 +1241,8 @@ def _add_footer(fig):
 # ---------------------------------------------------------------------------
 
 def plot_global(data, product_var, header_title,
-                cmap, levels, cbar_label, outpath, lat_range=(-50, 50)):
+                cmap, levels, cbar_label, outpath, lat_range=(-50, 50),
+                lons=None, lats=None, subtitle=None, extend='max'):
     """
     Plot a global equatorial-focused shaded map (standard for PR1, LWP, WVP).
 
@@ -1041,11 +1272,24 @@ def plot_global(data, product_var, header_title,
         Full output file path (.gif or .png).
     lat_range : tuple
         (lat_min, lat_max) for the map extent. Default (-50, 50).
+    lons, lats : array-like or None
+        1-D coordinate centers for data.  Default: LONS/LATS (2.5°).  Pass
+        LONS_1/LATS_1 for a 1.0° field (gen_wvp_anom).
+    subtitle : str or None
+        Optional second title line, drawn under header_title.  Used by
+        gen_wvp_anom to name the baseline the anomaly is actually against.
+    extend : str
+        contourf/colorbar extend mode.  Default 'max' suits the sequential
+        products, whose fields are bounded below by zero; a diverging anomaly
+        field passes 'both' so departures beyond either end keep their
+        under/over colors instead of being clipped to the end bins.
 
-    Called by: gen_pr1, gen_lwp, gen_wvp
+    Called by: gen_pr1, gen_lwp, gen_wvp, gen_wvp_anom
     """
     if data is None:
         return None
+    _lons = lons if lons is not None else LONS
+    _lats = lats if lats is not None else LATS
 
     # BoundaryNorm maps the N-1 intervals between the N level boundaries to
     # the N-1 colors in the ListedColormap.  clip=False lets values outside
@@ -1080,9 +1324,14 @@ def plot_global(data, product_var, header_title,
 
     # Single-line suptitle: the full product + month/year string.
     # No separate axes-level title - constrained_layout packs the suptitle
-    # directly above the map with no extra gap.
-    fig.suptitle(header_title, fontsize=13, fontweight='bold',
-                 color='#1a1a6e')
+    # directly above the map with no extra gap.  An anomaly caller passes a
+    # subtitle naming the baseline, which is appended as a smaller second line.
+    if subtitle:
+        fig.suptitle(f'{header_title}\n{subtitle}', fontsize=13,
+                     fontweight='bold', color='#1a1a6e', linespacing=1.4)
+    else:
+        fig.suptitle(header_title, fontsize=13, fontweight='bold',
+                     color='#1a1a6e')
 
     if HAS_CARTOPY:
         ax.set_extent([0, 360, lat_range[0], lat_range[1]],
@@ -1108,7 +1357,12 @@ def plot_global(data, product_var, header_title,
                           color='grey', linestyle='--',
                           crs=ccrs.PlateCarree())
         gl.xlocator     = mticker.FixedLocator([0, 60, 120, 180, -120, -60])
-        gl.ylocator     = mticker.FixedLocator(list(range(-50, 51, 10)))
+        # Latitude ticks every 10° across whatever extent the caller asked for,
+        # so a wider anomaly map (gen_wvp_anom) still labels its full range
+        # instead of stopping at the ±50° default.
+        gl.ylocator     = mticker.FixedLocator(
+            list(range(int(np.ceil(lat_range[0] / 10.0)) * 10,
+                       int(np.floor(lat_range[1] / 10.0)) * 10 + 1, 10)))
         gl.top_labels    = False
         gl.bottom_labels = True
         gl.left_labels   = True
@@ -1118,15 +1372,15 @@ def plot_global(data, product_var, header_title,
         # contourf interpolates smoothly between the 2.5° cell centers,
         # matching the visual appearance of the operational GrADS output.
         # transform=PlateCarree() tells cartopy the data coords are lon/lat degrees.
-        cf = ax.contourf(LONS, LATS, data,
-                         levels=levels, cmap=cmap, norm=norm, extend='max',
+        cf = ax.contourf(_lons, _lats, data,
+                         levels=levels, cmap=cmap, norm=norm, extend=extend,
                          transform=ccrs.PlateCarree())
     else:
-        lat_mask = (LATS >= lat_range[0]) & (LATS <= lat_range[1])
+        lat_mask = (_lats >= lat_range[0]) & (_lats <= lat_range[1])
         # Mask NaN so contourf does not attempt to interpolate through missing cells
         data_masked = np.ma.masked_invalid(data[lat_mask, :])
-        cf = ax.contourf(LONS, LATS[lat_mask], data_masked,
-                         levels=levels, cmap=cmap, norm=norm, extend='max')
+        cf = ax.contourf(_lons, _lats[lat_mask], data_masked,
+                         levels=levels, cmap=cmap, norm=norm, extend=extend)
         ax.set_xlabel('Longitude (°E)', fontsize=8)
         ax.set_ylabel('Latitude (°N)', fontsize=8)
         ax.tick_params(labelsize=7)
@@ -1135,8 +1389,12 @@ def plot_global(data, product_var, header_title,
     # fraction=0.07 makes the bar ~75% thicker than the previous 0.04 so the
     # color gradient bands are clearly distinguishable.
     # shrink=0.92 extends horizontal coverage to ~92% of axes width.
+    # Colorbar extend must match the contourf extend so the legend shows the same
+    # under/over arrows the map uses. A diverging anomaly (extend='both') needs
+    # the lower arrow too; hardcoding 'max' would drop it while the map still
+    # colored sub-range cells with the under color.
     cbar = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05,
-                        fraction=0.07, shrink=0.92, extend='max')
+                        fraction=0.07, shrink=0.92, extend=extend)
     cbar.set_label(cbar_label, fontsize=8)
     cbar.ax.tick_params(labelsize=7)
     # Auto-thin colorbar ticks when there are more than 8 level boundaries.
@@ -1182,7 +1440,8 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
                       cmap, levels, anom_cmap, anom_levels,
                       cbar_label, anom_label, outpath,
                       snw_lons=None, snw_lats=None,
-                      anom_lons=None, anom_lats=None):
+                      anom_lons=None, anom_lats=None,
+                      lat_cutoff=30, subtitle=None):
     """
     Plot a 4-panel polar stereographic snow-cover figure matching snow_4.gs.
 
@@ -1226,8 +1485,17 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
         1-D longitude centers for anom_precomp.  Default: LONS (2.5°).
     anom_lats : array-like or None
         1-D latitude centers for anom_precomp.  Default: LATS (2.5°).
+    lat_cutoff : int
+        Equatorward edge of both hemispheres' polar panels, in degrees.
+        Default 30 matches snow_4.gs ('set mpvals -270 90 30 90').  gen_ice
+        passes 50 to match ice.gs, whose sea-ice domain stops at ±50°.
+    subtitle : str or None
+        Second suptitle line describing the baseline.  MUST describe the
+        baseline actually used: the caller falling back to a non-WMO baseline
+        passes a subtitle that does not claim WMO.  Default None draws the
+        header alone.
 
-    Called by: gen_snw
+    Called by: gen_snw, gen_ice
     """
     if data_full is None:
         return None
@@ -1275,7 +1543,12 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
 
     # Two-line suptitle above the subplot grid.
     # y=0.96 places it above top=0.88, giving ~0.9" of clear space.
-    fig.suptitle(f'{header_title}\nAnomaly Based on Departure from the 1991-2020 (WMO) Baseline',
+    # The baseline line is caller-supplied because it is a factual claim about
+    # which baseline produced the anomaly panels: this was previously hardcoded
+    # to the WMO string, so a figure that fell back to the 2.5-degree ~2008-2020
+    # baseline still asserted "1991-2020 (WMO)" in its title while its colorbar
+    # label correctly said otherwise.  Callers now pass the matching text.
+    fig.suptitle('\n'.join([header_title, subtitle]) if subtitle else header_title,
                  fontsize=12, fontweight='bold', color='#1a1a6e', linespacing=1.4,
                  y=0.96)
 
@@ -1312,13 +1585,13 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
     # (_snw_lons/_snw_lats and _anom_lons/_anom_lats); gen_snw now supplies 1.0°
     # for both, with 2.5° only on the fallback path.
     panels = [
-        (0, 0, 30,  90,  data_full, norm_snw,  cmap,
+        (0, 0, lat_cutoff,  90,  data_full, norm_snw,  cmap,
          _snw_lons, _snw_lats, 'Northern Hemisphere',         cbar_label),
-        (0, 1, 30,  90,  anom,      norm_anom, anom_cmap,
+        (0, 1, lat_cutoff,  90,  anom,      norm_anom, anom_cmap,
          _anom_lons, _anom_lats, 'Northern Hemisphere Anomaly', anom_label),
-        (1, 0, -90, -30, data_full, norm_snw,  cmap,
+        (1, 0, -90, -lat_cutoff, data_full, norm_snw,  cmap,
          _snw_lons,  _snw_lats,  'Southern Hemisphere',         cbar_label),
-        (1, 1, -90, -30, anom,      norm_anom, anom_cmap,
+        (1, 1, -90, -lat_cutoff, anom,      norm_anom, anom_cmap,
          _anom_lons, _anom_lats, 'Southern Hemisphere Anomaly', anom_label),
     ]
 
@@ -1505,7 +1778,7 @@ def gen_snw(sat, yy, mm, outdir, indir):
 
     Both the snow field and the anomaly are computed at 1.0-degree.  The WMO
     1991-2020 climatological mean comes from the same 1.0-degree series
-    (_compute_snow_climatology_1deg): the ncdc-bin morning-chain archive
+    (_compute_climatology_1deg): the ncdc-bin morning-chain archive
     (F-08 -> F-17, back to 1987) for the morning primary, else the
     per-satellite {sat}-1.0 yearly files.  This replaces the earlier 2.5-degree
     anomaly whose combined-bin baseline only reached 2008.  If the 1.0-degree
@@ -1521,7 +1794,7 @@ def gen_snw(sat, yy, mm, outdir, indir):
     # the operational snow_4.gs which reads snow_mon_10.ctl -> f17-1.0/SNW.{yy}.
     # This gives 4× finer spatial resolution than the 2.5° per-month binary,
     # reducing the large cell-edge holes visible over Canada and Russia.
-    data = read_snw_1deg(indir, sat, yy, mm)
+    data = read_prod_1deg(indir, sat, 'SNW', yy, mm)
     if data is None:
         # Fall back to 2.5° if the 1.0° file is unavailable (e.g., early in a year
         # before combine_10deg has been run, or for a satellite with no 1.0° output).
@@ -1553,7 +1826,7 @@ def gen_snw(sat, yy, mm, outdir, indir):
     # 1.0-degree field shown in the NH/SH panels (from ncdc-bin for the morning
     # chain, or the per-satellite {sat}-1.0 yearly file).  The baseline is the
     # genuine WMO 1991-2020 normal from the same 1.0-degree series
-    # (_compute_snow_climatology_1deg).  This replaces the former 2.5-degree
+    # (_compute_climatology_1deg).  This replaces the former 2.5-degree
     # anomaly, whose combined-bin baseline only reached 2008 and so was really a
     # ~13-year average mislabeled as 1991-2020.  Doing both fields at 1.0-degree
     # also removes the previous 1.0-vs-2.5 resolution mismatch between the
@@ -1568,19 +1841,28 @@ def gen_snw(sat, yy, mm, outdir, indir):
     # holds if no anomaly can be computed (placeholder panel) so the WMO label
     # never appears without the WMO baseline behind it.
     anom_label = '% departure from baseline mean'
+    # The suptitle baseline line tracks the same branch as anom_label, so a
+    # fallback figure never carries a WMO claim in its title (see
+    # plot_polar_4panel's subtitle parameter).
+    anom_subtitle = None
     if snw_lons is LONS_1:               # current field is 1.0-degree
-        clim_1deg, n_base = _compute_snow_climatology_1deg(
-            indir, sat, mon_idx, baseline_start=1991, baseline_end=2020)
+        _b0, _b1 = ANOM_BASELINE['SNW']
+        clim_1deg, n_base = _compute_climatology_1deg(
+            indir, sat, 'SNW', mon_idx, baseline_start=_b0, baseline_end=_b1)
         if clim_1deg is not None:
             # NaN propagates through the subtraction, so a fill cell in either the
             # current field or the baseline yields NaN in the anomaly (no explicit
             # mask needed). The Python float 100.0 does not upcast the float32 arrays.
-            anom = (100.0 * (data - clim_1deg)).astype(np.float32)
+            # SNW is stored as a 0-1 fraction, so ANOM_SCALE['SNW'] = 100 converts
+            # the departure to % points (ICE and WVP are NOT scaled; see ANOM_SCALE).
+            anom = (ANOM_SCALE['SNW'] * (data - clim_1deg)).astype(np.float32)
             # Report the realized baseline length. It is the full WMO window only for
             # the morning primary (f17, 29 of 30 yr); the late chain covers fewer years
             # (f16 ~15, f18 ~11 within 1991-2020), so naming the count keeps the label
             # honest rather than implying a full 30-year normal for every satellite.
-            anom_label = f'% departure from 1991-2020 mean (WMO, {n_base} yr)'
+            _desc = _baseline_desc((_b0, _b1), n_base)
+            anom_label = f'% departure from {_desc}'
+            anom_subtitle = f'Anomaly Based on Departure from the {_desc}'
 
     if anom is None:
         # 1.0-degree current field or baseline unavailable (e.g. 2.5° fallback
@@ -1594,9 +1876,11 @@ def gen_snw(sat, yy, mm, outdir, indir):
                                              baseline_start=1991, baseline_end=2020)
         if data_25 is not None and clim_25 is not None:
             # NaN propagates through the subtraction (see the 1.0-degree branch).
-            anom = (100.0 * (data_25 - clim_25)).astype(np.float32)
+            anom = (ANOM_SCALE['SNW'] * (data_25 - clim_25)).astype(np.float32)
             anom_lons_use, anom_lats_use = LONS, LATS
             anom_label = '% departure from recent-period mean'
+            anom_subtitle = ('Anomaly Based on Departure from the '
+                             'Recent-Period Mean (not the WMO baseline)')
 
     return plot_polar_4panel(
         data, anom, header_title,
@@ -1605,8 +1889,147 @@ def gen_snw(sat, yy, mm, outdir, indir):
         'monthly snow cover fraction', anom_label,
         outpath,
         snw_lons=snw_lons, snw_lats=snw_lats,
-        anom_lons=anom_lons_use, anom_lats=anom_lats_use
+        anom_lons=anom_lons_use, anom_lats=anom_lats_use,
+        subtitle=anom_subtitle
     )
+
+
+def gen_ice(sat, yy, mm, outdir, indir):
+    """
+    Monthly sea ice (ICE) 4-panel polar stereographic image with anomaly.
+
+    Layout mirrors gen_snw:
+      Panel 1 (top-left):  NH sea ice        Panel 2 (top-right): NH anomaly
+      Panel 3 (bot-left):  SH sea ice        Panel 4 (bot-right): SH anomaly
+
+    Data scaling: none.  ICE is stored in PERCENT (0-100), unlike SNW which is
+    a 0-1 fraction, so the departure is already in % points and ANOM_SCALE
+    leaves it alone.  Applying the snow ×100 here would inflate it 100-fold.
+
+    Both the ice field and the anomaly are computed at 1.0-degree from the same
+    series (_compute_climatology_1deg): the ncdc-bin morning-chain archive for
+    the morning primary, else the per-satellite {sat}-1.0 yearly files.
+
+    The baseline is the SSMIS-era window ANOM_BASELINE['ICE'] (2009-2020), NOT
+    the WMO 1991-2020 normal that SNW and WVP use, because ICE concentration
+    steps at the 2008/2009 SSM/I -> SSMIS transition by -5 points at 60-70N
+    growing to -33 points at 88-90N.  See the ANOM_BASELINE comment for the
+    measurements and the reasoning; the short version is that a cross-era ICE
+    normal would paint the central Arctic with sensor artifact that reads as
+    ice loss.  The label names the SSMIS era explicitly so the shorter baseline
+    is visible on the figure.
+
+    There is no 2.5-degree fallback: unlike snow, ICE has no operational
+    2.5-degree anomaly path to fall back to, and a 2.5-degree combined baseline
+    would only reach 2008, so when the 1.0-degree baseline is unavailable the
+    anomaly panels render their 'Climatology unavailable' placeholder rather
+    than a silently-shorter baseline.
+
+    Panels stop at ±50° latitude, matching ice.gs ('set mpvals -270 90 50 90'),
+    which is the sea-ice domain.
+
+    Output filename: {Mon}{YY}-ic-25prod.gif  (var 'ic', per ice.gs)
+    NOT part of the NCEI archive imagery tar, whose contents are fixed at
+    pr1/lwp/wvp/snow-color (see write_archive_imagery).
+
+    GrADS reference: ice.gs (field panels; the anomaly panels are new)
+    """
+    mon_idx = int(mm) - 1
+
+    # read_current_1deg applies the MIN_VALID_FRAC floor and the bad-year
+    # exclusion, the same gates the baseline uses, so a partially-written or
+    # known-bad current month declines rather than rendering a misleading figure.
+    data = read_current_1deg(indir, sat, 'ICE', yy, mm)
+    if data is None:
+        return None
+
+    mon_name     = MONTH_ABBR[mon_idx]
+    yr4          = _year4_from_yy(yy)
+    header_title = f'Sea Ice Cover for {mon_name} {yr4}'
+    outpath      = os.path.join(outdir, f'{mon_name}{yy}-ic-25prod.gif')
+
+    anom       = None
+    anom_label = '% point departure from baseline mean'
+    anom_subtitle = None
+    _b0, _b1 = ANOM_BASELINE['ICE']
+    clim, n_base = _compute_climatology_1deg(
+        indir, sat, 'ICE', mon_idx, baseline_start=_b0, baseline_end=_b1)
+    if clim is not None:
+        # NaN propagates through the subtraction, so a fill cell in either field
+        # yields NaN in the anomaly.
+        anom = (ANOM_SCALE['ICE'] * (data - clim)).astype(np.float32)
+        _desc = _baseline_desc((_b0, _b1), n_base)
+        anom_label = f'% point departure from {_desc}'
+        anom_subtitle = f'Anomaly Based on Departure from the {_desc}'
+
+    return plot_polar_4panel(
+        data, anom, header_title,
+        ICE_CMAP,  ICE_LEVELS,
+        ANOM_CMAP, ANOM_LEVELS,
+        'percent of time and area', anom_label,
+        outpath,
+        snw_lons=LONS_1, snw_lats=LATS_1,
+        anom_lons=LONS_1, anom_lats=LATS_1,
+        lat_cutoff=50, subtitle=anom_subtitle
+    )
+
+
+def gen_wvp_anom(sat, yy, mm, outdir, indir):
+    """
+    Monthly total precipitable water (WVP) anomaly global map.
+
+    This is a SEPARATE image from gen_wvp, which keeps rendering the 2.5-degree
+    WVP field unchanged.  The archive imagery tar carries that field image
+    (mw-hydro_v01_imagery_wvp_*), so its content is a fixed contract; the
+    anomaly is additive and is not archived.
+
+    Data scaling: none.  WVP is stored in mm, so the departure is in mm and
+    ANOM_SCALE leaves it alone (contrast SNW, a 0-1 fraction scaled ×100).
+    Levels are WVP_ANOM_LEVELS (±8 mm), not the ±35 %-point ANOM_LEVELS, which
+    would collapse a WVP anomaly into the single near-normal band.
+
+    Both the current field and the baseline are read at 1.0-degree from the same
+    series (_compute_climatology_1deg): ncdc-bin for the morning primary
+    (29 of 30 baseline years), else the per-satellite {sat}-1.0 yearly files.
+    No 2.5-degree fallback, for the same reason as gen_ice.
+
+    The map spans ±60°, wider than the ±50° of the WVP field image, because the
+    ocean WVP retrieval reaches into both mid-latitude storm-track regions where
+    the moisture anomaly is of interest; it stops short of the poles where the
+    retrieval is not defined.
+
+    Output filename: {Mon}{YY}-ta-anom-25prod.gif  (var 'ta', per wvp.gs)
+    """
+    mon_idx = int(mm) - 1
+
+    # Same gating as gen_ice: the WVP anomaly must not render 1998 (a
+    # documented-bad year) as its current field against a baseline that excludes
+    # it, nor difference a partially-written month.
+    data = read_current_1deg(indir, sat, 'WVP', yy, mm)
+    if data is None:
+        return None
+
+    _b0, _b1 = ANOM_BASELINE['WVP']
+    clim, n_base = _compute_climatology_1deg(
+        indir, sat, 'WVP', mon_idx, baseline_start=_b0, baseline_end=_b1)
+    if clim is None:
+        print(f'  No 1.0° WVP baseline for {sat}; no anomaly image written')
+        return None
+
+    anom = (ANOM_SCALE['WVP'] * (data - clim)).astype(np.float32)
+
+    mon_name     = MONTH_ABBR[mon_idx]
+    yr4          = _year4_from_yy(yy)
+    header_title = f'Total Precipitable Water Anomaly for {mon_name} {yr4}'
+    subtitle     = f'Departure from the {_baseline_desc((_b0, _b1), n_base)}'
+    outpath      = os.path.join(outdir, f'{mon_name}{yy}-ta-anom-25prod.gif')
+
+    return plot_global(anom, 'ta', header_title,
+                       ANOM_CMAP, WVP_ANOM_LEVELS,
+                       'monthly mm departure', outpath,
+                       lat_range=(-60, 60),
+                       lons=LONS_1, lats=LATS_1,
+                       subtitle=subtitle, extend='both')
 
 
 # ---------------------------------------------------------------------------
@@ -1660,13 +2083,26 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
         fig_lwp = gen_lwp(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_wvp = gen_wvp(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_snw = gen_snw(sat, yy_str, mm_str, sat_outdir, _indir)
+        # ICE and the WVP anomaly are 1.0-degree diagnostic images. WVP is
+        # referenced to the genuine WMO 1991-2020 normal; ICE is referenced to an
+        # SSMIS-only 2009-2020 window instead, because its concentration steps at
+        # the SSM/I -> SSMIS transition (see ANOM_BASELINE). Both are additive:
+        # neither enters the archive imagery tar, whose contents are fixed
+        # (write_archive_imagery), and gen_wvp's own field image is unchanged.
+        fig_ice = gen_ice(sat, yy_str, mm_str, sat_outdir, _indir)
+        fig_wva = gen_wvp_anom(sat, yy_str, mm_str, sat_outdir, _indir)
 
         if sat == 'f17':
-            # Retain f17 figures for archive output; close all others immediately.
+            # Retain f17 archive figures; close the rest immediately. fig_ice and
+            # fig_wva are not archived, so they are closed here for every
+            # satellite including f17.
             f17_figs = {'pr1': fig_pr1, 'lwp': fig_lwp, 'wvp': fig_wvp, 'snw': fig_snw}
+            for fig in (fig_ice, fig_wva):
+                if fig is not None:
+                    plt.close(fig)
         else:
             # Close non-f17 figures to free memory.
-            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw):
+            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw, fig_ice, fig_wva):
                 if fig is not None:
                     plt.close(fig)
 
