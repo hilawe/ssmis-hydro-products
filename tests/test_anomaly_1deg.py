@@ -28,6 +28,10 @@ import struct
 import pytest
 
 np = pytest.importorskip("numpy")
+# run_mon_image hard-requires matplotlib at import (it is the renderer), so a
+# host without it must skip this module at collection rather than error, per
+# the suite convention of guarding heavy dependencies (see conftest docstring).
+pytest.importorskip("matplotlib")
 
 from conftest import MONTHLY_DIR
 
