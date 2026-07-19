@@ -1,4 +1,4 @@
-"""1.0-degree anomaly imagery contracts (SNW/ICE/WVP).
+"""1.0-degree anomaly imagery contracts (SNW/ICE/WVP/CFR).
 
 The monthly anomaly panels compute a climatology from the 1.0-degree per-year
 binaries (ncdc-bin for the morning primary, {sat}-1.0 otherwise) and difference
@@ -232,6 +232,9 @@ def test_anom_scale_distinguishes_products():
     # The scale table is the one guard against differencing SNW (fraction) and
     # ICE/WVP (already in display units) with the same factor.
     assert rmi.ANOM_SCALE["SNW"] == 100.0
+    # CFR is a 0-1 fraction like SNW; forgetting the x100 (or applying it to
+    # ICE/WVP) is the scale-confusion class this table exists to prevent.
+    assert rmi.ANOM_SCALE["CFR"] == 100.0
     assert rmi.ANOM_SCALE["ICE"] == 1.0
     assert rmi.ANOM_SCALE["WVP"] == 1.0
 
@@ -241,6 +244,10 @@ def test_ice_uses_ssmis_baseline_others_wmo():
     assert rmi.ANOM_BASELINE["ICE"] == (2009, 2020)
     assert rmi.ANOM_BASELINE["SNW"] == (1991, 2020)
     assert rmi.ANOM_BASELINE["WVP"] == (1991, 2020)
+    # CFR joined the WMO-baseline family once the F-13 2008 wrong-variant year
+    # was regenerated (2026-07-19); a 2009-start here would silently rebuild
+    # the short-baseline problem the 1.G work exists to fix.
+    assert rmi.ANOM_BASELINE["CFR"] == (1991, 2020)
 
 
 def test_baseline_desc_reports_passed_window():
@@ -301,3 +308,44 @@ def test_snow_mixed_resolution_fallback_policy(tmp_path, monkeypatch):
     # the neutral label - crucially NOT a WMO-labeled 1.0-degree anomaly
     assert captured["anom"] is None
     assert "WMO" not in captured["anom_label"]
+
+
+def test_cfr_anomaly_end_to_end(tmp_path, monkeypatch):
+    # Behavioral pin for gen_cfr_anom (review find: the table pins alone would
+    # pass with a wrong product code, a missing x100 scale, or an unwired
+    # function). Seed a current month and MIN_BASELINE_YEARS of baseline, then
+    # verify the anomaly values and the significant plot_global arguments.
+    root = str(tmp_path)
+    sat = rmi.NCDC_BIN_SAT
+    os.makedirs(os.path.join(root, f"{sat}-1.0"))
+    os.makedirs(os.path.join(root, "ncdc-bin"))
+    may0 = 4
+    _write_year(os.path.join(root, f"{sat}-1.0", f"CFR.26-{sat}-1.0"),
+                {may0: _grid(0.6)})
+    n = rmi.MIN_BASELINE_YEARS
+    _seed_baseline(os.path.join(root, "ncdc-bin"), "CFR",
+                   {2000 + i: 0.5 for i in range(n)}, may0)
+    captured = {}
+    def fake_plot(data, product_var, header_title, cmap, levels, cbar_label,
+                  outpath, **kw):
+        captured.update(kw, data=data, var=product_var, levels=levels,
+                        outpath=outpath, title=header_title)
+        return "fig"
+    monkeypatch.setattr(rmi, "plot_global", fake_plot)
+    fig = rmi.gen_cfr_anom(sat, "26", "05", str(tmp_path), root)
+    assert fig == "fig"
+    # 0.6 fraction current vs 0.5 baseline -> +10 percentage points everywhere
+    assert np.allclose(captured["data"][~np.isnan(captured["data"])], 10.0)
+    assert captured["var"] == "cf"
+    assert captured["levels"] is rmi.ANOM_LEVELS
+    assert captured["lons"] is rmi.LONS_1 and captured["lats"] is rmi.LATS_1
+    assert captured["extend"] == "both"
+    assert captured["outpath"].endswith("May26-cf-anom-25prod.gif")
+    assert "Cloud Fraction Anomaly" in captured["title"]
+    # a missing baseline declines rather than rendering an unlabeled figure
+    bare = str(tmp_path / "bare")
+    os.makedirs(os.path.join(bare, f"{sat}-1.0"))
+    os.makedirs(os.path.join(bare, "ncdc-bin"))
+    _write_year(os.path.join(bare, f"{sat}-1.0", f"CFR.26-{sat}-1.0"),
+                {may0: _grid(0.6)})
+    assert rmi.gen_cfr_anom(sat, "26", "05", str(tmp_path), bare) is None

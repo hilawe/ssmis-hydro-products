@@ -43,12 +43,13 @@ INPUT BINARY FILES (GrADS format)
 
     1.0-degree yearly binaries (12 months per file, 360 lon × 180 lat,
     south-first, 0.5°E-first, lon-fastest), used by the snow panels and
-    the ICE / WVP anomaly diagnostics:
+    the ICE / WVP / CFR anomaly diagnostics:
       {indir}/{sat}-1.0/{PROD}.{yy}-{sat}-1.0   (current month + f16/f18 baseline)
       {indir}/ncdc-bin/{PROD}.{YY}              (morning-chain baseline, f17)
     An isolated --indir that lacks these renders the snow panels via their
-    2.5-degree fallback and SKIPS the ICE and WVP-anomaly images (they have no
-    2.5-degree fallback by design; watch stdout for the decline messages).
+    2.5-degree fallback and SKIPS the ICE, WVP-anomaly, and CFR-anomaly images
+    (they have no 2.5-degree fallback by design; watch stdout for the decline
+    messages).
 
 OUTPUT
     GIF files (PNG fallback if Pillow not installed) in --outdir/{sat}/, named:
@@ -566,7 +567,7 @@ WVP_ANOM_LEVELS = [-8, -6, -4, -2, 2, 4, 6, 8]
 #   WVP  stored in mm -> ×1, the departure is in mm
 # Applying the snow factor to ICE or WVP would inflate their anomalies 100-fold.
 # ---------------------------------------------------------------------------
-ANOM_SCALE = {'SNW': 100.0, 'ICE': 1.0, 'WVP': 1.0}
+ANOM_SCALE = {'SNW': 100.0, 'CFR': 100.0, 'ICE': 1.0, 'WVP': 1.0}
 
 # ---------------------------------------------------------------------------
 # Known-bad years in the 1.0-degree archive, excluded from any climatology.
@@ -653,6 +654,7 @@ def _month_is_valid(grid):
 # ---------------------------------------------------------------------------
 ANOM_BASELINE = {
     'SNW': (1991, 2020),
+    'CFR': (1991, 2020),
     'WVP': (1991, 2020),
     'ICE': (2009, 2020),
 }
@@ -2059,6 +2061,60 @@ def gen_wvp_anom(sat, yy, mm, outdir, indir):
                        subtitle=subtitle, extend='both')
 
 
+def gen_cfr_anom(sat, yy, mm, outdir, indir):
+    """
+    Monthly cloud fraction (CFR) anomaly global map.
+
+    CFR previously had no Python imagery at all (the legacy cfr.gs is a dead
+    path that opens PR1.ctl); this anomaly panel is its first, enabled once the
+    F-13 2008 wrong-variant year in ncdc-bin was regenerated (2026-07-19), which
+    had been the hold on any CFR climatology from this archive.
+
+    Data scaling: CFR is stored as a 0-1 fraction like SNW, so ANOM_SCALE
+    converts the departure to percentage points (contrast ICE, already percent,
+    and WVP, mm).  The measured CFR anomaly spans about +/-34 percentage points
+    at the 1st/99th percentiles with ~1% of cells beyond +/-35, so the shared
+    +/-35 percentage-point ANOM_LEVELS palette fits without CFR-specific levels.
+
+    Baseline: the genuine WMO 1991-2020 normal from ncdc-bin (29 of 30 years,
+    morning primary), the same window as SNW and WVP.  No 2.5-degree fallback,
+    for the same reason as gen_ice.
+
+    Output filename: {Mon}{YY}-cf-anom-25prod.gif  (var 'cf', per cfr.gs)
+    Not part of the NCEI archive imagery tar (fixed contents; see
+    write_archive_imagery).
+    """
+    mon_idx = int(mm) - 1
+
+    # Same gating as gen_ice/gen_wvp_anom: never difference a partially-written
+    # month or a documented-bad year against the gated baseline.
+    data = read_current_1deg(indir, sat, 'CFR', yy, mm)
+    if data is None:
+        return None
+
+    _b0, _b1 = ANOM_BASELINE['CFR']
+    clim, n_base = _compute_climatology_1deg(
+        indir, sat, 'CFR', mon_idx, baseline_start=_b0, baseline_end=_b1)
+    if clim is None:
+        print(f'  No 1.0° CFR baseline for {sat}; no anomaly image written')
+        return None
+
+    anom = (ANOM_SCALE['CFR'] * (data - clim)).astype(np.float32)
+
+    mon_name     = MONTH_ABBR[mon_idx]
+    yr4          = _year4_from_yy(yy)
+    header_title = f'Cloud Fraction Anomaly for {mon_name} {yr4}'
+    subtitle     = f'Departure from the {_baseline_desc((_b0, _b1), n_base)}'
+    outpath      = os.path.join(outdir, f'{mon_name}{yy}-cf-anom-25prod.gif')
+
+    return plot_global(anom, 'cf', header_title,
+                       ANOM_CMAP, ANOM_LEVELS,
+                       'monthly % point departure', outpath,
+                       lat_range=(-60, 60),
+                       lons=LONS_1, lats=LATS_1,
+                       subtitle=subtitle, extend='both')
+
+
 # ---------------------------------------------------------------------------
 # Main driver
 # ---------------------------------------------------------------------------
@@ -2118,18 +2174,19 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
         # (write_archive_imagery), and gen_wvp's own field image is unchanged.
         fig_ice = gen_ice(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_wva = gen_wvp_anom(sat, yy_str, mm_str, sat_outdir, _indir)
+        fig_cfa = gen_cfr_anom(sat, yy_str, mm_str, sat_outdir, _indir)
 
         if sat == 'f17':
             # Retain f17 archive figures; close the rest immediately. fig_ice and
             # fig_wva are not archived, so they are closed here for every
             # satellite including f17.
             f17_figs = {'pr1': fig_pr1, 'lwp': fig_lwp, 'wvp': fig_wvp, 'snw': fig_snw}
-            for fig in (fig_ice, fig_wva):
+            for fig in (fig_ice, fig_wva, fig_cfa):
                 if fig is not None:
                     plt.close(fig)
         else:
             # Close non-f17 figures to free memory.
-            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw, fig_ice, fig_wva):
+            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw, fig_ice, fig_wva, fig_cfa):
                 if fig is not None:
                     plt.close(fig)
 
