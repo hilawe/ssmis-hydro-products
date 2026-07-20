@@ -349,3 +349,35 @@ def test_cfr_anomaly_end_to_end(tmp_path, monkeypatch):
     _write_year(os.path.join(bare, f"{sat}-1.0", f"CFR.26-{sat}-1.0"),
                 {may0: _grid(0.6)})
     assert rmi.gen_cfr_anom(sat, "26", "05", str(tmp_path), bare) is None
+
+
+def test_cfr_field_end_to_end(tmp_path, monkeypatch):
+    # Behavioral pin for gen_cfr (the permanent field image promoted from the
+    # 2026-07-19 draft): native 0-1 units with NO anomaly scale applied, the
+    # named CFR palette, 1.0-degree coordinates, the legacy 'cf' filename.
+    root = str(tmp_path)
+    sat = rmi.NCDC_BIN_SAT
+    os.makedirs(os.path.join(root, f"{sat}-1.0"))
+    may0 = 4
+    _write_year(os.path.join(root, f"{sat}-1.0", f"CFR.26-{sat}-1.0"),
+                {may0: _grid(0.6)})
+    captured = {}
+    def fake_plot(data, product_var, header_title, cmap, levels, cbar_label,
+                  outpath, **kw):
+        captured.update(kw, data=data, var=product_var, levels=levels,
+                        outpath=outpath, title=header_title)
+        return "fig"
+    monkeypatch.setattr(rmi, "plot_global", fake_plot)
+    fig = rmi.gen_cfr(sat, "26", "05", str(tmp_path), root)
+    assert fig == "fig"
+    # field stays in native 0-1 units - a x100 here would be the scale bug
+    assert np.allclose(captured["data"][~np.isnan(captured["data"])], 0.6)
+    assert captured["var"] == "cf"
+    assert captured["levels"] is rmi.CFR_LEVELS
+    assert captured["lons"] is rmi.LONS_1 and captured["lats"] is rmi.LATS_1
+    assert captured["outpath"].endswith("May26-cf-25prod.gif")
+    assert "Cloud Fraction for" in captured["title"]
+    # missing 1.0-degree month declines (no 2.5-degree fallback by design)
+    bare = str(tmp_path / "bare")
+    os.makedirs(os.path.join(bare, f"{sat}-1.0"))
+    assert rmi.gen_cfr(sat, "26", "05", str(tmp_path), bare) is None

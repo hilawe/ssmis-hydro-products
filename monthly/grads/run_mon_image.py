@@ -43,11 +43,12 @@ INPUT BINARY FILES (GrADS format)
 
     1.0-degree yearly binaries (12 months per file, 360 lon × 180 lat,
     south-first, 0.5°E-first, lon-fastest), used by the snow panels and
-    the ICE / WVP / CFR anomaly diagnostics:
+    the CFR field map and the ICE / WVP / CFR anomaly diagnostics:
       {indir}/{sat}-1.0/{PROD}.{yy}-{sat}-1.0   (current month + f16/f18 baseline)
       {indir}/ncdc-bin/{PROD}.{YY}              (morning-chain baseline, f17)
     An isolated --indir that lacks these renders the snow panels via their
-    2.5-degree fallback and SKIPS the ICE, WVP-anomaly, and CFR-anomaly images
+    2.5-degree fallback and SKIPS the ICE, CFR-field, WVP-anomaly, and
+    CFR-anomaly images
     (they have no 2.5-degree fallback by design; watch stdout for the decline
     messages).
 
@@ -500,6 +501,13 @@ SNW_LEVELS  = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 SNW_CCOLS   = [22, 31, 32, 34, 43, 45, 47, 54, 56]  # 9 interval colors
 SNW_OVER    = 59
 SNW_CMAP    = build_cmap(SNW_CCOLS, SNW_OVER)
+
+# CFR field: cloud fraction is a 0-1 fraction like snow, and the approved
+# design (eyes-only draft, 2026-07-19, promoted to permanent) reuses the snow
+# field's GrADS levels and colors. Named separately so the CFR image does not
+# silently change if the snow palette is ever retuned.
+CFR_LEVELS  = list(SNW_LEVELS)
+CFR_CMAP    = build_cmap(SNW_CCOLS, SNW_OVER)
 
 # ---------------------------------------------------------------------------
 # Snow ANOMALY colormap - replicates snow_4.gs panels 3 and 4
@@ -2070,14 +2078,49 @@ def gen_wvp_anom(sat, yy, mm, outdir, indir):
                        subtitle=subtitle, extend='both')
 
 
+def gen_cfr(sat, yy, mm, outdir, indir):
+    """
+    Monthly cloud fraction (CFR) global field map.
+
+    Promoted from the 2026-07-19 eyes-only diagnostic draft at Hilawe's
+    direction; the render is identical to that approved draft. Unlike the
+    PR1/LWP/WVP field maps (2.5-degree per-month binaries, ±50°), CFR reads
+    the 1.0-degree yearly file and spans ±60°, matching its anomaly companion.
+    There is no 2.5-degree fallback: a missing or too-sparse 1.0-degree month
+    declines, consistent with the anomaly family (read_current_1deg gate).
+
+    Data scaling: none - the binary stores the 0-1 fraction directly.
+
+    Output filename: {Mon}{YY}-cf-25prod.gif  (var 'cf', per cfr.gs)
+    Not part of the NCEI archive imagery tar (fixed contents; see
+    write_archive_imagery).
+    """
+    mon_idx = int(mm) - 1
+
+    data = read_current_1deg(indir, sat, 'CFR', yy, mm)
+    if data is None:
+        return None
+
+    mon_name     = MONTH_ABBR[mon_idx]
+    yr4          = _year4_from_yy(yy)
+    header_title = f'Cloud Fraction for {mon_name} {yr4}'
+    outpath      = os.path.join(outdir, f'{mon_name}{yy}-cf-25prod.gif')
+
+    return plot_global(data, 'cf', header_title,
+                       CFR_CMAP, CFR_LEVELS,
+                       'monthly cloud fraction (0-1)', outpath,
+                       lat_range=(-60, 60),
+                       lons=LONS_1, lats=LATS_1)
+
+
 def gen_cfr_anom(sat, yy, mm, outdir, indir):
     """
     Monthly cloud fraction (CFR) anomaly global map.
 
-    CFR previously had no Python imagery at all (the legacy cfr.gs is a dead
-    path that opens PR1.ctl); this anomaly panel is its first, enabled once the
-    F-13 2008 wrong-variant year in ncdc-bin was regenerated (2026-07-19), which
-    had been the hold on any CFR climatology from this archive.
+    Companion to the gen_cfr field map (the legacy cfr.gs is a dead path that
+    opens PR1.ctl, so those two are CFR's only images). Enabled once the F-13
+    2008 wrong-variant year in ncdc-bin was regenerated (2026-07-19), which had
+    been the hold on any CFR climatology from this archive.
 
     Data scaling: CFR is stored as a 0-1 fraction like SNW, so ANOM_SCALE
     converts the departure to percentage points (contrast ICE, already percent,
@@ -2183,6 +2226,7 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
         # (write_archive_imagery), and gen_wvp's own field image is unchanged.
         fig_ice = gen_ice(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_wva = gen_wvp_anom(sat, yy_str, mm_str, sat_outdir, _indir)
+        fig_cfr = gen_cfr(sat, yy_str, mm_str, sat_outdir, _indir)
         fig_cfa = gen_cfr_anom(sat, yy_str, mm_str, sat_outdir, _indir)
 
         if sat == 'f17':
@@ -2190,12 +2234,12 @@ def run(yy, mm, indir=None, outdir=None, archive_dir=None):
             # fig_wva are not archived, so they are closed here for every
             # satellite including f17.
             f17_figs = {'pr1': fig_pr1, 'lwp': fig_lwp, 'wvp': fig_wvp, 'snw': fig_snw}
-            for fig in (fig_ice, fig_wva, fig_cfa):
+            for fig in (fig_ice, fig_wva, fig_cfr, fig_cfa):
                 if fig is not None:
                     plt.close(fig)
         else:
             # Close non-f17 figures to free memory.
-            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw, fig_ice, fig_wva, fig_cfa):
+            for fig in (fig_pr1, fig_lwp, fig_wvp, fig_snw, fig_ice, fig_wva, fig_cfr, fig_cfa):
                 if fig is not None:
                     plt.close(fig)
 
