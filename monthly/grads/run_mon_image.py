@@ -1353,12 +1353,18 @@ def plot_global(data, product_var, header_title,
                 edgecolor='#888888', facecolor='none', linewidth=0.2
             )
         )
-        # Labelled graticule replicating the ops GrADS gridline style.
-        # Longitude ticks: 0, 80E, 120E, 180, 120W, 60W (matching ops pr1/lwp/wvp.gs)
-        # Latitude ticks:  50N … 0 (Equator) … 50S, every 10°
+        # Labelled graticule: LABELS only, no lines (linewidth=0).  The former
+        # semi-transparent grey dashes blended with the saturated fill colors
+        # and the GIF's 256-color quantization snapped those blends to patchy
+        # whitish streaks that read as straight-line data artifacts (found on
+        # the CFR field diagnostic, 2026-07-19; the underlying data was
+        # verified smooth at the graticule latitudes).  The gridliner itself
+        # must stay, with draw_labels=True, because it is what draws the
+        # lat/lon axis labels - removing it entirely loses them.
+        # Longitude ticks: 0, 60E, 120E, 180, 120W, 60W (matching ops pr1/lwp/wvp.gs)
+        # Latitude ticks: every 10° across the caller's extent.
         # Labels only on left (lat) and bottom (lon) to avoid crowding the map.
-        gl = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5,
-                          color='grey', linestyle='--',
+        gl = ax.gridlines(draw_labels=True, linewidth=0,
                           crs=ccrs.PlateCarree())
         gl.xlocator     = mticker.FixedLocator([0, 60, 120, 180, -120, -60])
         # Latitude ticks every 10° across whatever extent the caller asked for,
@@ -1625,7 +1631,10 @@ def plot_polar_4panel(data_full, anom_precomp, header_title,
                     edgecolor='#888888', facecolor='none', linewidth=0.2
                 )
             )
-            ax.gridlines(linewidth=0.3, alpha=0.4, color='grey', linestyle='--')
+            # No graticule lines: over the saturated snow/ice fill they suffer
+            # the same GIF-quantization streaking as the global maps (see
+            # plot_global), and these panels draw no labels, so the gridliner
+            # has nothing else to contribute. Coastlines carry the georeference.
 
         if not HAS_CARTOPY:
             # Degraded (no-cartopy) mode draws plain Cartesian axes; without an
