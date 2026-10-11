@@ -542,7 +542,7 @@ def validate_gpcp_wrappers():
       3. Each of the nine carries its correct CF variable (rainfall_alg1/2,
          sampling_fraction).
 
-    Added after an independent adversarial review found the previous validator
+    Added because the previous validator
     constructed its own (obsolete) prefixes with a private writer, so it could
     pass while the operational writers produced unarchivable names.
 
@@ -652,7 +652,7 @@ def validate_gpcp():
          metadata stating merged constellation and 1992 coverage. This exercises
          the same code path the archive uses; an earlier validator built its own
          prefixes with a private writer and could pass while the writers were
-         broken (flagged by an independent adversarial review).
+         broken.
       B. Round-trip (this function): generate per-product NetCDF from the Q1 GPCP
          binaries and compare the NetCDF data against numpy-direct reads of the
          same binary (ground truth). Combined with the binary == IDL validation

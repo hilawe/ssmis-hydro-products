@@ -321,7 +321,7 @@ DEFAULT_OUTDIR = 'img'   # img/ under grads/
 #     not the grid
 #   - does not push gradients across more than ~1 grid cell
 #   - preserves fill/missing (NaN) boundaries - NaN cells are not blurred
-#     into neighbouring valid cells (see smooth_field() implementation)
+#     into neighboring valid cells (see smooth_field() implementation)
 #
 # To disable smoothing entirely, set SMOOTH_SIGMA = 0.0.
 # To increase smoothing, try 1.0 (≈ two-cell blur radius).
@@ -361,7 +361,7 @@ _GRADS_RGB = {
     12: (230, 175,  45),  # amber/gold         (reds[12]=230,greens[12]=175,blues[12]=45)
     13: (  0, 210, 140),  # sea-foam/teal      (reds[13]=0,  greens[13]=210,blues[13]=140)
     14: (130,   0, 220),  # violet             (reds[14]=130,greens[14]=0,  blues[14]=220)
-    15: (170, 170, 170),  # grey               (reds[15]=170,greens[15]=170,blues[15]=170)
+    15: (170, 170, 170),  # gray               (reds[15]=170,greens[15]=170,blues[15]=170)
     # ---------------------------------------------------------------------------
     # cpccol.gs - light yellow -> dark red (oranges/reds)
     21: (255, 250, 170), 22: (255, 232, 120), 23: (255, 192,  60),
@@ -387,7 +387,7 @@ _GRADS_RGB = {
     71: (250, 240, 230), 72: (240, 220, 210), 73: (225, 190, 180),
     74: (200, 160, 150), 75: (180, 140, 130), 76: (160, 120, 110),
     77: (140, 100,  90), 78: (120,  80,  70), 79: (100,  60,  50),
-    # cpccol.gs - light grey -> dark grey
+    # cpccol.gs - light gray -> dark gray
     81: (240, 240, 240), 82: (225, 225, 225), 83: (210, 210, 210),
     84: (195, 195, 195), 85: (180, 180, 180), 86: (165, 165, 165),
     87: (150, 150, 150), 88: (135, 135, 135), 89: (120, 120, 120),
@@ -399,7 +399,7 @@ _GRADS_RGB = {
 
 def _rgb_f(gidx):
     """Return float (0-1) RGB tuple for a GrADS color index.
-    Falls back to grey (0.5, 0.5, 0.5) for unknown indices."""
+    Falls back to gray (0.5, 0.5, 0.5) for unknown indices."""
     r, g, b = _GRADS_RGB.get(gidx, (128, 128, 128))
     return (r / 255.0, g / 255.0, b / 255.0)
 
@@ -894,7 +894,7 @@ def smooth_field(data, sigma=SMOOTH_SIGMA):
     The NaN-aware algorithm (replacing NaN with 0 for convolution, then
     dividing by a smoothed mask of valid-cell weights) is a standard technique
     that prevents valid data near coastlines or data-void regions from bleeding
-    into, or being diluted by, neighbouring NaN cells.
+    into, or being diluted by, neighboring NaN cells.
 
     Parameters
     ----------
@@ -921,7 +921,7 @@ def smooth_field(data, sigma=SMOOTH_SIGMA):
     #   1. Replace NaN with 0 before convolution (NaN would propagate otherwise).
     #   2. Build a binary validity mask (1=valid, 0=NaN).
     #   3. Smooth both the zeroed data and the mask with the same kernel.
-    #   4. Divide to get the weighted mean over valid neighbours only.
+    #   4. Divide to get the weighted mean over valid neighbors only.
     #   5. Restore NaN wherever the original cell was NaN.
     nan_mask  = np.isnan(data)
     data_fill = np.where(nan_mask, 0.0, data).astype(np.float64)
@@ -1361,8 +1361,8 @@ def plot_global(data, product_var, header_title,
                 edgecolor='#888888', facecolor='none', linewidth=0.2
             )
         )
-        # Labelled graticule: LABELS only, no lines (linewidth=0).  The former
-        # semi-transparent grey dashes blended with the saturated fill colors
+        # Labeled graticule: LABELS only, no lines (linewidth=0).  The former
+        # semi-transparent gray dashes blended with the saturated fill colors
         # and the GIF's 256-color quantization snapped those blends to patchy
         # whitish streaks that read as straight-line data artifacts (found on
         # the CFR field diagnostic, 2026-07-19; the underlying data was

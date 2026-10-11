@@ -310,8 +310,7 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     # (n_months_f17 - 12) + cm with the cm==1 special case inside _months_since, ran
     # one month high from February through December (harmless, since that month is
     # fill in the source) but in January collapsed to the PRIOR January, writing 11
-    # real prior-year months of the dual product as fill (data loss). Flagged by an
-    # independent adversarial review.
+    # real prior-year months of the dual product as fill (data loss).
     icurrent_month = (cy - _LATE_INIT_YEAR) * 12 + (cm - 1)
 
     print(f'gpcp_dual: n_months={n_months_f17}, current_month={icurrent_month}')
@@ -346,7 +345,7 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
         # the last pass winning). Writing it only on the final pass preserves the
         # output bytes exactly while removing the truncate-and-rewrite window in
         # which an interruption between passes left a PR1-gated or partial SSA
-        # file (flagged by an independent second-model review).
+        # file.
         write_ssa = (iproduct == 2)
 
         with open(f17_pr, 'rb') as fp17, \
