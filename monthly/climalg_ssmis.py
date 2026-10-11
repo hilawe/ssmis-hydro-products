@@ -584,10 +584,13 @@ def process_file(fpath, tag_2d, add_oce, add_lnd, add_si,
     ta = data.astype(np.float32) + 70.0  # (540, 1080, 7)
 
     # Missing value: byte=32 -> TA=102
-    # A pixel is skipped if channels 0 and 2,3,4,6 (1-indexed: 1,3,4,5,7) are all 102
+    # A pixel is skipped only if channels 0,2,3,4,5,6 (Fortran INPREC(NO), NO+2 .. NO+6,
+    # 1-indexed 1,3,4,5,6,7) are all 102. Channel 5 (85V) was missing from this test
+    # until 2026-10-09; a pixel with only 85V valid is counted by the Fortran and was
+    # skipped here (sample-count differences on SSM/I inputs, F-13 March 2008).
     skip = ((ta[:, :, 0] == 102.0) & (ta[:, :, 2] == 102.0) &
             (ta[:, :, 3] == 102.0) & (ta[:, :, 4] == 102.0) &
-            (ta[:, :, 6] == 102.0))  # (540, 1080)
+            (ta[:, :, 5] == 102.0) & (ta[:, :, 6] == 102.0))  # (540, 1080)
 
     # Apply bias corrections (per channel, per land/ocean)
     # kindex: 0-based row into the 161-entry LUT. Fortran uses NINT(TA)-139 as a
@@ -639,9 +642,11 @@ def process_file(fpath, tag_2d, add_oce, add_lnd, add_si,
     sice  = seaice(ta_corr, is_ocean, ichan)
 
     # Suppress sea ice near equator (within 40° lat of equator in input row space)
-    # |I - NROW/2| * RES <= 40 -> suppress
+    # Fortran: |I - NROW/2| * RES <= 40 with I the 1-based row (I = row_idx + 1).
+    # The 0-based form shifted the band one row south at both edges (fixed 2026-10-09;
+    # it was the last cell-level difference against the index-clamped Fortran).
     row_idx = np.arange(NROW)
-    equat_mask = np.abs(row_idx - NROW // 2) * (360.0 / NCOL) <= 40.0
+    equat_mask = np.abs((row_idx + 1) - NROW // 2) * (360.0 / NCOL) <= 40.0
     equat_mask_2d = equat_mask[:, np.newaxis]
     sice = np.where(equat_mask_2d & (sice == 100.0), 0.0, sice)
 
