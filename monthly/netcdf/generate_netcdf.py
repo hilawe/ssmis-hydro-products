@@ -112,7 +112,10 @@ PRODUCT_NAMES = ['CFR', 'LWP', 'PF1', 'PF2', 'PR1', 'PR2', 'SSA', 'ICE', 'SNW', 
 # IDL index order was: CFR=0,LWP=1,PF1=2,PF2=3,PR1=4,PR2=5,SSA=6,ICE=7,SNW=8,WVP=9
 CF_STANDARD = {
     'CFR': ('cloud_fraction',            '1',        'Monthly mean cloud fraction (0-1.0)'),
-    'LWP': ('liquid_water_path',         '1000*mm',  'Monthly mean liquid water path'),
+    # LWP is stored in g m-2: the retrieval returns mm of liquid water (kg m-2) and the monthly mean is
+    # 1000*sum/count over samples with liquid water path above 0.02 mm (MEANLWP, mean_lwp). Until 2026-10-09 the
+    # units attribute was the encoding phrase '1000*mm', which is not a CF/UDUNITS unit.
+    'LWP': ('liquid_water_path',         'g m-2',    'Monthly mean cloud liquid water path over samples with liquid water path above 0.02 mm'),
     'PF1': ('rain_fraction_alg1',        '1',        'Monthly mean rain fraction Algorithm #1'),
     'PF2': ('rain_fraction_alg2',        '1',        'Monthly mean rain fraction Algorithm #2'),
     'PR1': ('rainfall_alg1',             'mm',       'Monthly rainfall Algorithm #1'),
@@ -125,7 +128,7 @@ CF_STANDARD = {
 
 PRODUCT_TITLES_25 = {
     'CFR': 'GPCP Monthly 2.5 Degree Mean Cloud Fraction (0-1.0)',
-    'LWP': 'GPCP Monthly 2.5 Degree Mean Liquid Water Path (1000*mm)',
+    'LWP': 'GPCP Monthly 2.5 Degree Mean Liquid Water Path (g m-2)',
     'PF1': 'GPCP Monthly 2.5 Degree Mean Rain Fraction Algorithm #1 (0-1.0)',
     'PF2': 'GPCP Monthly 2.5 Degree Mean Rain Fraction Algorithm #2 (0-1.0)',
     'PR1': 'GPCP Monthly 2.5 Degree Rainfall (mm) Algorithm #1',
@@ -142,7 +145,7 @@ PRODUCT_NAMES_10 = ['CFR', 'LWP', 'PF1', 'PR1', 'SSA', 'ICE', 'SNW', 'WVP']
 
 PRODUCT_TITLES_10 = {
     'CFR': 'NCDC Monthly 1.0 Degree Mean Cloud Fraction (0-1.0)',
-    'LWP': 'NCDC Monthly 1.0 Degree Mean Liquid Water Path (1000*mm)',
+    'LWP': 'NCDC Monthly 1.0 Degree Mean Liquid Water Path (g m-2)',
     'PF1': 'NCDC Monthly 1.0 Degree Mean Rain Fraction Algorithm #1 (0-1.0)',
     'PR1': 'NCDC Monthly 1.0 Degree Mean Rainfall (mm) Algorithm #1',
     'SSA': 'NCDC Monthly 1.0 Degree Mean Sampling Fraction (0-1.0)',
@@ -284,7 +287,10 @@ def write_netcdf(ncfile, data_2d, lats, lons, year, month,
 
         prod_var = nc.createVariable(var_name, 'f4', ('time', 'lat', 'lon'),
                                      fill_value=FILL_VALUE)
-        prod_var.long_name = PRODUCT_TITLES_25.get(prod_key, description)
+        # Title table by grid spacing: 1.0-degree files take the 1.0-degree titles (until 2026-10-09 every
+        # file took the 2.5-degree table, so 1.0-degree long_name said "2.5 Degree").
+        titles = PRODUCT_TITLES_10 if res_deg < 2.0 else PRODUCT_TITLES_25
+        prod_var.long_name = titles.get(prod_key, description)
         prod_var.units = units
         prod_var.valid_min = np.float32(0.0)
         prod_var.Note = description
