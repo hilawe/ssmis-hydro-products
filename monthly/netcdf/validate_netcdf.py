@@ -8,31 +8,36 @@ PURPOSE
     validation month used throughout the SSMIS Python conversion effort).
 
     Validation covers:
-      1. Late-constellation 2.5° products (all 10: CFR, LWP, PF1, PF2, PR1, PR2,
-         SSA, ICE, SNW, WVP) - Python reads Q1 25deg-bin/*.MON, IDL reference is
-         Q1 netcdf/2.5-deg/*_early_202603.nc (note: IDL labels were inverted;
-         IDL "early" file = F17/late constellation data).
-      2. Early-constellation 2.5° products (all 10) - Python reads Q1 f10-bin/*.F10,
-         IDL reference is Q1 netcdf/2.5-deg/*_late_202603.nc (IDL "late" = F16/early).
+      1. F-17 (early, morning) chain 2.5° products (all 10: CFR, LWP, PF1, PF2, PR1,
+         PR2, SSA, ICE, SNW, WVP) - Python reads Q1 25deg-bin/*.MON, IDL reference is
+         Q1 netcdf/2.5-deg/*_early_202603.nc. The code names this chain "late" (see
+         the note below).
+      2. F-16 (late-morning) chain 2.5° products (all 10) - Python reads Q1
+         f10-bin/*.F10, IDL reference is Q1 netcdf/2.5-deg/*_late_202603.nc. The code
+         names this chain "early".
       3. Coordinate arrays: lat, lon, time (days-since-1987-01-01).
       4. Key CF global attributes: constellation, platform, sensor, units, etc.
       5. GPCP late and early PR1/PR2 NetCDF products.
       6. Structural checks: dimensions, variable names, fill value.
 
     Reference month: March 2026 (year=2026, month=3).
-      Late binary offset: imonth = (2026-1987)*12 + (3-1) = 470
-      Early binary offset: imonth = (2026-1992)*12 + (3-1) = 410
+      F-17 chain offset (IMONTH_LATE):  imonth = (2026-1987)*12 + (3-1) = 470
+      F-16 chain offset (IMONTH_EARLY): imonth = (2026-1992)*12 + (3-1) = 410
 
-IMPORTANT NOTE ON EARLY/LATE LABEL INVERSION IN IDL
-    The IDL scripts products_early_twohalfdeg_netcdf.pro and
-    products_late_twohalfdeg_netcdf.pro had their "early" and "late" labels SWAPPED
-    relative to the scientifically correct definition (equatorial crossing time):
-      - IDL "early" file -> contains F17 (late/6pm) constellation data
-      - IDL "late"  file -> contains F16 (early/morning) constellation data
-    Python generate_netcdf.py corrects this inversion.
-    Therefore, for data value comparison:
-      - Python late output  ↔  IDL early file (same F17 binary source)
-      - Python early output ↔  IDL late file  (same F16 binary source)
+NOTE ON THE EARLY AND LATE NAMES IN THIS FILE
+    The chains are named by the satellites' morning equatorial crossing time. The
+    early chain (F-08, F-11, F-13, F-17) crosses near 06 LST descending and its
+    record is 25deg-bin. The late chain (F-10, F-14, F-15, F-16) crosses near 09 to
+    10 LST and its record is f10-bin. The IDL scripts labeled both correctly, so the
+    IDL "_early_" file holds F-17 data and the IDL "_late_" file holds F-16 data.
+    This validator was written while the 2026 Python conversion had the labels
+    swapped, from reading F-17's evening ascending node (near 18 LST) as the naming
+    reference. generate_netcdf.py was corrected on 2026-05-07. The function and
+    constant names here (validate_late_25deg, Q1_LATE_BIN, IMONTH_LATE and their
+    early counterparts) still say late for the F-17 chain and early for the F-16
+    chain, and are kept unchanged. Each comparison pairs the same binary source:
+      - validate_late_25deg():  25deg-bin (F-17) against the IDL _early_ file
+      - validate_early_25deg(): f10-bin (F-16) against the IDL _late_ file
     See the project documentation for full background.
 
 CALLED BY
@@ -72,8 +77,8 @@ import generate_netcdf as gn   # gives us read_month, make_coords, write_netcdf,
 Q1_ROOT = '/path/to/ssmis_data/monthly'
 
 # Q1 combined binary files used as input to both the IDL (reference) and Python (test)
-Q1_LATE_BIN  = os.path.join(Q1_ROOT, '25deg-bin')   # *.MON files (F17/late chain)
-Q1_EARLY_BIN = os.path.join(Q1_ROOT, 'f10-bin')     # *.F10 files (F16/early chain)
+Q1_LATE_BIN  = os.path.join(Q1_ROOT, '25deg-bin')   # *.MON files, F-17 early (morning) chain
+Q1_EARLY_BIN = os.path.join(Q1_ROOT, 'f10-bin')     # *.F10 files, F-16 late-morning chain
 Q1_GPCP_BIN  = os.path.join(Q1_ROOT, 'gpcp')        # gpcp_nesdis_*.dat files
 
 # Q1 IDL-generated reference NetCDF files (March 2026)
@@ -88,8 +93,8 @@ VAL_MONTH = 3
 VAL_MM    = f'{VAL_MONTH:02d}'
 
 # Month index within each multi-year binary file (0-based)
-# Late constellation starts Jan 1987:  March 2026 = (2026-1987)*12 + (3-1) = 470
-# Early constellation starts Jan 1992: March 2026 = (2026-1992)*12 + (3-1) = 410
+# F-17 chain (named late here) starts Jan 1987:  March 2026 = (2026-1987)*12 + (3-1) = 470
+# F-16 chain (named early here) starts Jan 1992: March 2026 = (2026-1992)*12 + (3-1) = 410
 IMONTH_LATE  = (VAL_YEAR - 1987) * 12 + (VAL_MONTH - 1)   # = 470
 IMONTH_EARLY = (VAL_YEAR - 1992) * 12 + (VAL_MONTH - 1)   # = 410
 
@@ -133,7 +138,7 @@ def read_binary_month(binary_file, imonth, grid):
     binary_file : str
         Full path to the combined binary file (e.g. Q1_LATE_BIN/PR1.MON).
     imonth : int
-        0-based month index within the file (e.g. 470 for March 2026 in the late record).
+        0-based month index within the file (e.g. 470 for March 2026 in the F-17 record).
     grid : dict
         Grid definition dict (e.g. gn.GRID_25).
 
@@ -402,18 +407,19 @@ def check_attributes(py_nc_path, expected_constellation_fragment,
 
 def validate_late_25deg():
     """
-    Validate Python late-constellation 2.5° NetCDF against IDL reference for Mar 2026.
+    Validate the Python 2.5° NetCDF of the F-17 (early, morning) chain against the IDL
+    reference for Mar 2026. The function name says late for historical reasons.
 
-    Python reads from Q1 25deg-bin/*.MON (F17/late, starts Jan 1987).
-    IDL reference is Q1 netcdf/2.5-deg/*_early_202603.nc (F17 data, misnamed 'early').
+    Python reads from Q1 25deg-bin/*.MON (F-17 chain, starts Jan 1987).
+    IDL reference is Q1 netcdf/2.5-deg/*_early_202603.nc (F-17 data, correctly labeled).
 
     Called by:  main()
     Calls:      run_python_netcdf_for_product(), compare_nc_product(), check_attributes()
     """
     print('\n' + '='*70)
-    print('SECTION A: Late-constellation 2.5° - Python vs IDL (Mar 2026)')
-    print('  Python source: Q1/25deg-bin/*.MON (F17/6pm chain)')
-    print('  IDL reference: Q1/netcdf/2.5-deg/*_early_202603.nc (F17, mislabeled)')
+    print('SECTION A: F-17 (early, morning) chain 2.5° - Python vs IDL (Mar 2026)')
+    print('  Python source: Q1/25deg-bin/*.MON (F-17 early, morning chain)')
+    print('  IDL reference: Q1/netcdf/2.5-deg/*_early_202603.nc (F-17)')
     print('='*70)
 
     constellation = (
@@ -430,7 +436,7 @@ def validate_late_25deg():
 
     for prod_key in PRODUCTS:
         bin_file = os.path.join(Q1_LATE_BIN, f'{prod_key}.MON')
-        # IDL reference for F17 data is the "early" labeled file (inversion!)
+        # The IDL reference for F-17 data is the correctly labeled _early_ file
         idl_ref  = os.path.join(Q1_NC_25,
                                 f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_early_{VAL_YEAR:04d}{VAL_MM}.nc')
 
@@ -455,24 +461,25 @@ def validate_late_25deg():
         row = compare_nc_product(py_nc, idl_ref, prod_key, 'late25')
         stats_rows.append(row)
 
-    _print_stats_table(stats_rows, 'Late 2.5°')
+    _print_stats_table(stats_rows, 'F-17 chain 2.5°')
     return stats_rows
 
 
 def validate_early_25deg():
     """
-    Validate Python early-constellation 2.5° NetCDF against IDL reference for Mar 2026.
+    Validate the Python 2.5° NetCDF of the F-16 (late-morning) chain against the IDL
+    reference for Mar 2026. The function name says early for historical reasons.
 
-    Python reads from Q1 f10-bin/*.F10 (F16/early, starts Jan 1992).
-    IDL reference is Q1 netcdf/2.5-deg/*_late_202603.nc (F16 data, misnamed 'late').
+    Python reads from Q1 f10-bin/*.F10 (F-16 chain, starts Jan 1992).
+    IDL reference is Q1 netcdf/2.5-deg/*_late_202603.nc (F-16 data, correctly labeled).
 
     Called by:  main()
     Calls:      run_python_netcdf_for_product(), compare_nc_product(), check_attributes()
     """
     print('\n' + '='*70)
-    print('SECTION B: Early-constellation 2.5° - Python vs IDL (Mar 2026)')
-    print('  Python source: Q1/f10-bin/*.F10 (F16/morning chain)')
-    print('  IDL reference: Q1/netcdf/2.5-deg/*_late_202603.nc (F16, mislabeled)')
+    print('SECTION B: F-16 (late-morning) chain 2.5° - Python vs IDL (Mar 2026)')
+    print('  Python source: Q1/f10-bin/*.F10 (F-16 late-morning chain)')
+    print('  IDL reference: Q1/netcdf/2.5-deg/*_late_202603.nc (F-16)')
     print('='*70)
 
     constellation = (
@@ -496,7 +503,7 @@ def validate_early_25deg():
 
     for prod_key in PRODUCTS:
         bin_file = os.path.join(Q1_EARLY_BIN, f'{prod_key}.{ext_map[prod_key]}')
-        # IDL reference for F16 data is the "late" labeled file (inversion!)
+        # The IDL reference for F-16 data is the correctly labeled _late_ file
         idl_ref  = os.path.join(Q1_NC_25,
                                 f'mw-hydro_{gn.PRODUCT_VERSION}_2.5-deg_{prod_key.lower()}_late_{VAL_YEAR:04d}{VAL_MM}.nc')
 
@@ -520,7 +527,7 @@ def validate_early_25deg():
         row = compare_nc_product(py_nc, idl_ref, prod_key, 'early25')
         stats_rows.append(row)
 
-    _print_stats_table(stats_rows, 'Early 2.5°')
+    _print_stats_table(stats_rows, 'F-16 chain 2.5°')
     return stats_rows
 
 
@@ -669,8 +676,8 @@ def validate_gpcp():
         the Q1 dual with the 1992-origin month index accordingly.
 
     GPCP CDR labels were CORRECT in both IDL and Python (no inversion):
-      late -> F17 (6pm chain), reads gpcp_nesdis_pr1.dat
-      early -> F16 (morning chain), reads gpcp_nesdis_f10_pr1.dat
+      late -> F17 (GPCP tag for the early, morning chain), reads gpcp_nesdis_pr1.dat
+      early -> F16 (GPCP tag for the late-morning chain), reads gpcp_nesdis_f10_pr1.dat
 
     Called by:  main()
     Calls:      validate_gpcp_wrappers(), run_python_netcdf_for_product(),
@@ -678,7 +685,7 @@ def validate_gpcp():
     """
     print('\n' + '='*70)
     print('SECTION C: GPCP NetCDF - wrappers end-to-end + Q1 binary round-trip')
-    print('  GPCP labels NEVER inverted - late=F17 6pm, early=F16 morning in both')
+    print('  GPCP tags are the same in IDL and Python - late=F17, early=F16')
     print('='*70)
 
     # Wrapper failure must reach main()'s summary and exit code (an earlier

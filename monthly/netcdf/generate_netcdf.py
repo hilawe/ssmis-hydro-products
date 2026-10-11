@@ -5,8 +5,8 @@ generate_netcdf.py
 PURPOSE
     Converts SSMIS binary product files to NetCDF-CF format.
     Replaces: generate_netcdf.sh + all IDL .pro files in netcdf/:
-      - products_late_twohalfdeg_netcdf.pro   (early/morning constellation: F08/F11/F13/F17)
-      - products_early_twohalfdeg_netcdf.pro  (late/late-morning constellation: F10/F14/F15/F16)
+      - products_early_twohalfdeg_netcdf.pro  (early, morning chain: F08/F11/F13/F17)
+      - products_late_twohalfdeg_netcdf.pro   (late-morning chain: F10/F14/F15/F16)
       - products_early_onedeg_netcdf.pro      (early/morning constellation 1.0-deg: F08-F17)
       - gpcp_late_netcdf.pro
       - gpcp_early_netcdf.pro
