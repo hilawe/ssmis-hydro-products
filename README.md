@@ -1,38 +1,44 @@
-# SSMI(S) Monthly Hydrological Products
+# SSMI(S) Hydrological Products
 
 [![tests](https://github.com/hilawe/ssmis-hydro-products/actions/workflows/ci.yml/badge.svg)](https://github.com/hilawe/ssmis-hydro-products/actions/workflows/ci.yml)
 
-The SSMI(S) Monthly Hydrological Products are a long-term, globally gridded
-passive-microwave record of hydrological variables, including precipitation rate
-and frequency, cloud liquid water, water vapor, snow cover, and sea ice, spanning
-July 1987 to the present at 2.5 and 1.0 degree resolution. They are derived from
-the Defense Meteorological Satellite Program (DMSP) Special Sensor
+The SSMI(S) Hydrological Products are a long-term record of monthly, globally
+gridded passive-microwave fields of hydrological variables, including
+precipitation rate and frequency, cloud liquid water, water vapor, snow cover, and
+sea ice, beginning in July 1987, at 2.5 and 1.0 degree resolution. They are
+derived from the Defense Meteorological Satellite Program (DMSP) Special Sensor
 Microwave/Imager (SSM/I) and Special Sensor Microwave Imager/Sounder (SSMIS)
-series and produced operationally at the NOAA National Centers for Environmental
+series and produced operationally at NOAA's National Centers for Environmental
 Information (NCEI).
 
 The record is used well beyond its own archive. It provides passive-microwave
 input to the [Global Precipitation Climatology Project (GPCP) Climate Data
 Record](https://www.ncei.noaa.gov/products/climate-data-records/precipitation-gpcp-daily),
-and it contributes every month to the [NOAA Climate Prediction Center (CPC)
+and it has contributed every month to the [NOAA Climate Prediction Center (CPC)
 Climate Diagnostics
 Bulletin](https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/bulletin_0500/index.html).
 Sustaining a consistent, well-characterized multi-decadal record across an
 evolving satellite constellation, so that downstream products can rely on it
 month after month, is the central problem this project addresses.
 
-This repository holds the version 2 processing system. The full chain was
-reengineered from a legacy Fortran77, IDL, and GrADS implementation into a single
-open-source Python 3 codebase, validated to exact agreement against the original
-reference, and hardened with an automated test suite and continuous integration.
-Version 2 also corrects two long-standing errors in the prior record and updates
-the snow-cover anomaly baseline to the World Meteorological Organization
-1991-2020 climate normals.
+This repository holds the version 2 processing system, an open-source Python 3
+reimplementation of the legacy Fortran77, IDL, and GrADS processing from the daily
+1/3-degree antenna-temperature grids onward, with an automated test suite and
+continuous integration. Testing it against the legacy code on identical inputs
+found three latent defects in the legacy code, an unbounded index into the
+antenna-temperature correction table, an unbounded index into the scattering-index
+table, and uninitialized variables in the emission branch of the precipitation
+retrieval. Version 2 removes them, and with them removed the legacy code and
+version 2 agree within 0.001 in product units on the months tested. Version 2 also
+corrects the dual-satellite merge of the GPCP input product and updates the
+snow-cover anomaly baseline to the World Meteorological Organization 1991-2020
+climate normals. The historical record has not yet been reprocessed with
+version 2.
 
 ## Principal Investigator
 
 Hilawe Semunegus (NOAA NCEI) is the Principal Investigator for the SSMI(S)
-Monthly Hydrological Products, responsible for the production, scientific
+Hydrological Products, responsible for the production, scientific
 stewardship, validation, and modernization of the record. Ralph R. Ferraro
 (University of Maryland ESSIC) is a co-author and the original author of the
 retrieval algorithms, which build on the long-established NOAA passive-microwave
@@ -87,23 +93,28 @@ scientific Python stack. The golden-month regression runs only where the
 
 ## Scientific and engineering highlights
 
-- A multi-decadal, multi-sensor record sustained across the DMSP morning and
-  late-morning constellation chains, intercalibrated into a single continuous
-  time series.
+- A multi-decadal, multi-sensor record kept as two chains, morning and late
+  morning, each a sequence of DMSP satellites, so users have two samplings of the
+  diurnal cycle.
 - Operational input to the GPCP Climate Data Record and to the monthly CPC
   Climate Diagnostics Bulletin.
-- Validated to bitwise-exact agreement on the scattering sampling diagnostic and
-  to correlations above 0.998 on every product against the legacy reference, so
-  the modern pipeline reproduces the reference rather than approximating it.
+- Defects found by testing against the legacy code are removed, and the effect of
+  removing them is measured over a full year of matched inputs rather than
+  assumed.
 - The binary format contract (float32, south-first rows, longitude-fastest) and
   the NetCDF metadata are pinned by the test suite, not just documentation.
 
 ## Citation and data
 
-- A companion manuscript is in preparation for the Journal of Atmospheric and
-  Oceanic Technology. This README will be updated with the citation on
-  acceptance.
-- The archived dataset is available from NOAA NCEI.
+- A companion manuscript, "Evaluation and Processing Corrections for the SSMI(S)
+  Hydrological Products" by Hilawe Semunegus and Ralph R. Ferraro, is in revision
+  at the Journal of Applied Meteorology and Climatology. This README will be
+  updated with the citation on acceptance.
+- The archive of record is held at NOAA's National Centers for Environmental
+  Information,
+  [doi:10.7289/V5QF8R3K](https://doi.org/10.7289/V5QF8R3K).
+- A corrected 2024 sample year produced by version 2 is archived on Zenodo,
+  [doi:10.5281/zenodo.23424220](https://doi.org/10.5281/zenodo.23424220).
 - The processing source is also archived on Zenodo under the concept DOI
   [10.5281/zenodo.20127244](https://doi.org/10.5281/zenodo.20127244), which
   resolves to the latest released version.
