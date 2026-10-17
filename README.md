@@ -104,6 +104,9 @@ scientific Python stack. The golden-month regression runs only where the
   Oceanic Technology. This README will be updated with the citation on
   acceptance.
 - The archived dataset is available from NOAA NCEI.
+- The processing source is also archived on Zenodo under the concept DOI
+  [10.5281/zenodo.20127244](https://doi.org/10.5281/zenodo.20127244), which
+  resolves to the latest released version.
 
 ## License
 
