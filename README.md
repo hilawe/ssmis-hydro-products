@@ -106,10 +106,10 @@ scientific Python stack. The golden-month regression runs only where the
 
 ## Citation and data
 
-- A companion manuscript, "Evaluation and Processing Corrections for the SSMI(S)
-  Hydrological Products" by Hilawe Semunegus and Ralph R. Ferraro, is in revision
-  at the Journal of Applied Meteorology and Climatology. This README will be
-  updated with the citation on acceptance.
+- The version 2 processing corrections and their evaluation are described in
+  "Evaluation and Processing Corrections for the SSMI(S) Hydrological Products" by
+  Hilawe Semunegus and Ralph R. Ferraro, in revision at the Journal of Applied
+  Meteorology and Climatology.
 - The archive of record is held at NOAA's National Centers for Environmental
   Information,
   [doi:10.7289/V5QF8R3K](https://doi.org/10.7289/V5QF8R3K).
