@@ -423,7 +423,7 @@ def validate_late_25deg():
     print('='*70)
 
     constellation = (
-        'SSM/I F-08: July 1987-December 1991; '
+        'SSM/I F-08: August 1987-December 1991; '
         'SSM/I F-11: January 1992-April 1995; '
         'SSM/I F-13: May 1995-December 2008; '
         'SSMIS F-17: January 2009-present'
@@ -484,8 +484,8 @@ def validate_early_25deg():
 
     constellation = (
         'SSM/I F-10: January 1992-September 1997; '
-        'SSM/I F-14: October 1997-December 2001; '
-        'SSM/I F-15: January 2002-June 2006; '
+        'SSM/I F-14: October 1997-December 2000; '
+        'SSM/I F-15: January 2001-June 2006; '
         'SSMIS F-16: July 2006-present'
     )
     history = (

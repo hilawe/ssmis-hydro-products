@@ -89,8 +89,8 @@ SATELLITE_REGISTRY: dict = {
         active=True,
         constellation_history=(
             'SSM/I F-10: January 1992-September 1997; '
-            'SSM/I F-14: October 1997-December 2001; '
-            'SSM/I F-15: January 2002-June 2006; '
+            'SSM/I F-14: October 1997-December 2000; '
+            'SSM/I F-15: January 2001-June 2006; '
             'SSMIS F-16: July 2006-present'
         ),
     ),
@@ -103,7 +103,7 @@ SATELLITE_REGISTRY: dict = {
         input_format='binary_tdr',
         active=True,
         constellation_history=(
-            'SSM/I F-08: July 1987-December 1991; '
+            'SSM/I F-08: August 1987-December 1991; '
             'SSM/I F-11: January 1992-April 1995; '
             'SSM/I F-13: May 1995-December 2008; '
             'SSMIS F-17: January 2009-present'
@@ -117,7 +117,7 @@ SATELLITE_REGISTRY: dict = {
         start_year=2010,
         input_format='binary_tdr',
         active=True,
-        constellation_history='SSMIS F-18: January 2010-present',
+        constellation_history='SSMIS F-18: February 2010-present',
     ),
 }
 

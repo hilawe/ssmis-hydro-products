@@ -470,8 +470,8 @@ def run_late_25deg(out_dir='2.5-deg/'):
 
     # Satellite chain for the late/late-morning (~09-10h descending) constellation.
     # F-10: January 1992 - September 1997
-    # F-14: October 1997 - December 2001
-    # F-15: January 2002 - June 2006
+    # F-14: October 1997 - December 2000
+    # F-15: January 2001 - June 2006 (the legacy IDL writer says January 2002, the data January 2001)
     # F-16: July 2006 - present
     # Late-morning chain history (F-10 -> ... -> F-16 today) from satellite_config.
     constellation = get_constellation_history(EARLY_CONSTELLATION_SAT)
