@@ -35,6 +35,7 @@ NOTES
        (-> Ta = 102.0 K), named  as{yy}{jday}.{sat}  /  ds{yy}{jday}.{sat}.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -70,6 +71,7 @@ class SatelliteConfig:
     input_format: str               # 'binary_tdr'
     active: bool = False
     constellation_history: str = ''
+    lut_add_si: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +166,20 @@ def get_start_year(name: str) -> int:
 def get_constellation_history(name: str) -> str:
     """Return the constellation history string for NetCDF metadata."""
     return get_sat(name).constellation_history
+
+
+def get_lut_add_si(name: str) -> Optional[str]:
+    """Absolute path of the satellite's own scattering-index table, or None for the standard lut_add_si.
+
+    A relative path in the registry is read from this module's directory, never from the working directory.
+    """
+    sat = SATELLITE_REGISTRY.get(name)
+    if sat is None or sat.lut_add_si is None:
+        return None
+    path = sat.lut_add_si
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+    return path
 
 
 def late_start_year() -> int:

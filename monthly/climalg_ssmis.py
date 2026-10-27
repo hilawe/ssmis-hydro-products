@@ -32,8 +32,11 @@ import sys
 import os
 import argparse
 import calendar
+import hashlib
 import numpy as np
 from scipy.ndimage import maximum_filter1d
+
+import satellite_config
 
 # ---------------------------------------------------------------------------
 # Grid constants
@@ -534,12 +537,25 @@ def write_grads(fname, xp):
 # Main processing function
 # ---------------------------------------------------------------------------
 
-def load_luts(coeff_dir='.'):
-    """Load lookup tables from text files."""
+def resolve_si_path(sat, coeff_dir):
+    """The scattering-index table a run reads.
+
+    An explicit coefficient directory supplies every table, its own lut_add_si included. Otherwise a satellite that
+    carries its own table in satellite_config reads it, and every other satellite reads the standard table from the
+    working directory, as before.
+    """
+    if coeff_dir is not None:
+        return os.path.join(coeff_dir, 'lut_add_si')
+    own = satellite_config.get_lut_add_si(sat)
+    return own if own is not None else os.path.join('.', 'lut_add_si')
+
+
+def load_luts(coeff_dir='.', si_path=None):
+    """Load lookup tables from text files. si_path, when given, replaces coeff_dir's lut_add_si."""
     # lut_add_ocean: 161 rows, format: f6.2 7(f7.2)
     oce = np.loadtxt(os.path.join(coeff_dir, 'lut_add_ocean'), usecols=range(8))
     lnd = np.loadtxt(os.path.join(coeff_dir, 'lut_add_land'),  usecols=range(8))
-    si  = np.loadtxt(os.path.join(coeff_dir, 'lut_add_si'),    usecols=range(3))
+    si  = np.loadtxt(si_path if si_path is not None else os.path.join(coeff_dir, 'lut_add_si'), usecols=range(3))
     add_oce = oce[:, 1:].astype(np.float32)   # (161, 7)
     add_lnd = lnd[:, 1:].astype(np.float32)   # (161, 7)
     add_si  = si[:, 1:].astype(np.float32)    # (149, 2)
@@ -781,8 +797,11 @@ def run(sat, yyyy, jday_start, jday_end, res=2.5, outdir=None, inpath=None, coef
     print(f'climalg_ssmis: sat={sat}, year={yyyy}, jdays={jday_start}-{jday_end}, res={res}°')
     print(f'  inpath={_inpath}  coeff={_coeff_dir}  outpath={outpath}')
 
-    # Load auxiliary data (LUTs and land/sea tag) from the coefficient directory
-    add_oce, add_lnd, add_si = load_luts(_coeff_dir)
+    # Load auxiliary data (LUTs and land/sea tag) from the coefficient directory. The scattering-index table is the
+    # satellite's own when satellite_config names one and no coefficient directory was given.
+    _si_path = resolve_si_path(sat, coeff_dir)
+    print(f'  lut_add_si={_si_path}  sha256={hashlib.sha256(open(_si_path, "rb").read()).hexdigest()}')
+    add_oce, add_lnd, add_si = load_luts(_coeff_dir, si_path=_si_path)
     tag_2d = load_land_tag(_tag_file)
 
     # Build output bin maps.
