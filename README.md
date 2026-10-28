@@ -74,8 +74,15 @@ Global rainfall, January 2026:
 - **Configuration** (`monthly/satellite_config.py`, `monthly/product_version.py`):
   a single source of truth for the satellite constellation and the product
   version, so a satellite transition is a configuration change.
+- **WSF-M input adapter** (`monthly/wsfm_adapter.py`): grids orbit files of
+  predicted SSMIS antenna temperatures for the Weather System Follow-on -
+  Microwave (WSF-M) satellite into the same daily 1/3-degree format, reproducing
+  the operational decoder's gridding, encoding and fill rules. It is experimental.
+  The WSF-M entry in the configuration is disabled, and publishing the adapter
+  activates no satellite and accepts no WSF-M product.
 - **Tests** (`tests/`): a pytest suite covering the radiometric conversion, the
-  binary and NetCDF I/O contracts, grid geometry, retrieval invariants, and a
+  binary and NetCDF I/O contracts, grid geometry, retrieval invariants, the WSF-M
+  adapter's parity with the operational decoder's rules on synthetic inputs, and a
   deterministic bitwise golden-month regression. Continuous integration runs it
   on every push.
 
