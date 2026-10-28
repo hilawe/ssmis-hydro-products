@@ -5,9 +5,9 @@ satellite_config.py
 PURPOSE
     Single-source configuration for the satellites processed by the SSMI(S)
     hydrological product pipeline.  Every science module (climalg_ssmis.py,
-    gpcp_processing.py, generate_netcdf.py) imports from here so that adding a
-    new satellite or transitioning from one spacecraft to another requires
-    changing only this file.
+    gpcp_processing.py, generate_netcdf.py, wsfm_adapter.py) imports from here
+    so that adding a new satellite or transitioning from one spacecraft to
+    another requires changing only this file.
 
 ARCHITECTURE
     The pipeline has two distinct "constellation chains" defined by the
@@ -15,6 +15,8 @@ ARCHITECTURE
 
     LATE  (morning crossing ~06h LST): F-08 -> F-11 -> F-13 -> F-17.
           Their combined multi-year record feeds the morning-chain archive.
+          WSF-M is registered as this chain's possible successor and is
+          DISABLED. The entry activates nothing and accepts no product.
 
     EARLY (late-morning crossing ~09-10h LST): F-10 -> F-14 -> F-15 -> F-16.
           Their record feeds the late-morning-chain archive.
@@ -33,6 +35,11 @@ NOTES
     - 'binary_tdr' input_format: IDL-decoded 1/3-degree binary files,
        shape (540x1080x7) uint8 with offset +70 K; fill = byte value 32
        (-> Ta = 102.0 K), named  as{yy}{jday}.{sat}  /  ds{yy}{jday}.{sat}.
+    - 'netcdf_ssmis_ta' input_format: orbit-swath NetCDF files carrying
+       predicted SSMIS antenna temperatures (nscan x npixel x 11 float32, K,
+       NaN = missing), whose first 7 channels map to the 7 algorithm channels.
+       wsfm_adapter.py grids them to the 1/3-degree binary format, so
+       climalg_ssmis.py needs no change.
 """
 
 import os
@@ -57,19 +64,30 @@ class SatelliteConfig:
         Calendar year of the satellite's first full month of data.
         None means "not yet determined".
     input_format : str
-        'binary_tdr' -> IDL-decoded 1/3-degree uint8 binary files.
+        'binary_tdr'      -> IDL-decoded 1/3-degree uint8 binary files.
+        'netcdf_ssmis_ta' -> orbit NetCDF with predicted SSMIS antenna temperatures.
+    netcdf_variable : str
+        Variable holding the antenna temperatures (K), for 'netcdf_ssmis_ta' only.
+    netcdf_channels : list of int
+        0-based indices in that variable of the 7 algorithm channels
+        [19V, 19H, 22V, 37V, 37H, 91V, 91H], for 'netcdf_ssmis_ta' only.
     active : bool
         True  -> this satellite is currently being processed.
         False -> placeholder / retired / not yet launched.
     constellation_history : str
         Human-readable description of the satellite's chain history, used in
         NetCDF global attributes.
+    lut_add_si : str or None
+        A scattering-index table read by this satellite only, in place of the
+        standard lut_add_si. None uses the standard table.
     """
     name: str
     constellation: str              # 'late' or 'early'
     start_year: Optional[int]       # None = TBD
-    input_format: str               # 'binary_tdr'
+    input_format: str               # 'binary_tdr' or 'netcdf_ssmis_ta'
     active: bool = False
+    netcdf_variable: str = 'Predicted_SSMIS_Tas'
+    netcdf_channels: List[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     constellation_history: str = ''
     lut_add_si: Optional[str] = None
 
@@ -120,6 +138,28 @@ SATELLITE_REGISTRY: dict = {
         input_format='binary_tdr',
         active=True,
         constellation_history='SSMIS F-18: February 2010-present',
+    ),
+
+    # WSF-M (Weather System Follow-on - Microwave), morning constellation.
+    # DISABLED. Activation is a separate operational decision and needs
+    # active=True, a start year and LATE_CONSTELLATION_SAT = 'wsfm'. It reads
+    # the standard tables. No WSF-M correction table is part of this release.
+    'wsfm': SatelliteConfig(
+        name='wsfm',
+        constellation='late',
+        start_year=None,
+        input_format='netcdf_ssmis_ta',
+        active=False,
+        netcdf_variable='Predicted_SSMIS_Tas',
+        netcdf_channels=[0, 1, 2, 3, 4, 5, 6],   # 19V,19H,22V,37V,37H,91V,91H
+        lut_add_si=None,
+        constellation_history=(
+            'SSM/I F-08: August 1987-December 1991; '
+            'SSM/I F-11: January 1992-April 1995; '
+            'SSM/I F-13: May 1995-December 2008; '
+            'SSMIS F-17: January 2009-<TRANSITION_DATE>; '
+            'WSF-M: <TRANSITION_DATE>-present'   # placeholder until a transition
+        ),
     ),
 }
 
@@ -180,6 +220,11 @@ def get_lut_add_si(name: str) -> Optional[str]:
     if not os.path.isabs(path):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
     return path
+
+
+def is_netcdf_input(name: str) -> bool:
+    """Return True if the satellite uses the NetCDF (WSF-M) input format."""
+    return get_sat(name).input_format == 'netcdf_ssmis_ta'
 
 
 def late_start_year() -> int:
