@@ -80,6 +80,17 @@ Global rainfall, January 2026:
   the operational decoder's gridding, encoding and fill rules. It is experimental.
   The WSF-M entry in the configuration is disabled, and publishing the adapter
   activates no satellite and accepts no WSF-M product.
+- **AMSR2 conversion** (`conversion/amsr2/route_a/`): a reader and a fixed set of
+  quantile maps that turn Colorado State University's brightness temperatures from
+  the Advanced Microwave Scanning Radiometer 2 (AMSR2) into daily grids in the same
+  1/3-degree format. It is provisional. It has run as a parallel, unpublished stream
+  beside F-16 since November 2026, and publishing it activates no stream and accepts
+  no product. Its README gives the measured differences from F-16, the limits and
+  the dataset citation.
+- **Land/sea tag and lookup tables** (`monthly/NLNDSEA.TAG`, `monthly/lut_add_ocean`,
+  `monthly/lut_add_land`, `monthly/lut_add_si`): the files the processor reads,
+  inherited with the legacy processing package and included unchanged. The
+  conversion's README states what is and is not recorded about them.
 - **Tests** (`tests/`): a pytest suite covering the radiometric conversion, the
   binary and NetCDF I/O contracts, grid geometry, retrieval invariants, the WSF-M
   adapter's parity with the operational decoder's rules on synthetic inputs, and a
@@ -90,7 +101,7 @@ Global rainfall, January 2026:
 
 ```bash
 pip install -r requirements-test.txt   # plus numpy, scipy, netCDF4
-python -m pytest tests
+python -m pytest tests conversion
 ```
 
 Tests that require a third-party library or the operational input grids skip

@@ -1,4 +1,6 @@
-# Test-only dependency. The suite otherwise runs against the pipeline's own
+# Test-only dependencies. The suite otherwise runs against the pipeline's own
 # runtime stack (numpy, scipy, netCDF4), which must already be installed on the
-# host. Tests that need a given package skip cleanly where it is absent.
+# host. The AMSR2 conversion under conversion/ reads its input with h5py, and its
+# tests skip where h5py is absent, as tests that need any other package do.
 pytest>=7
+h5py
