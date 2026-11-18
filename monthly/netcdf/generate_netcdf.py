@@ -58,9 +58,14 @@ CONSTELLATION TERMINOLOGY - IMPORTANT
 
     See the project documentation for the full history.
 
-    GPCP CDR products (run_gpcp_late_netcdf / run_gpcp_early_netcdf) retain their existing
-    "late" (F17) and "early" (F16) GPCP-convention labels, which are separate from the
-    product file convention above and were never affected by this confusion.
+    The GPCP-input files (run_gpcp_early_netcdf / run_gpcp_late_netcdf) carry the SAME
+    labels as the product files above: _early_ is the F-08 to F-17 chain and _late_ is the
+    F-10 to F-16 chain. Until 18 November 2026 this paragraph said that GPCP had a
+    convention of its own in which late meant F-17, and the two writers labeled the chains
+    that way. There is no such convention. The legacy writers (gpcp_early_netcdf.pro reads
+    gpcp_nesdis_pr1.dat from 1987, gpcp_late_netcdf.pro reads gpcp_nesdis_f10_pr1.dat from
+    1992) and every archived file agree with the labels above. The table GPCP_FAMILIES
+    below ties each label to its input files, its first year and its chain.
 
 CALLED BY
     run_ssmis.sh (via cd $hydroMONTHLY_NETCDF && python3 generate_netcdf.py)
@@ -512,28 +517,81 @@ def run_late_25deg(out_dir='2.5-deg/'):
                          dataset_name=os.path.basename(bin_file))
 
 
-def _run_gpcp_family_netcdf(tag, gpcp_files, initial_year, constellation, summary,
-                            out_dir='gpcp-input/'):
-    """Write one GPCP-input NetCDF family (late = F-17, early = F-16, or dual).
+# The three GPCP-input families. The key is the LABEL, the token in the file name. Each
+# label is tied here to the binary files it is written from, to the January its array
+# starts in, and to the satellite whose chain it names, so that the four cannot drift
+# apart. They follow the legacy writers and every archived file:
+#   early = the morning chain (F-08 to F-17), gpcp_nesdis_*.dat, array from 1987
+#   late  = the late-morning chain (F-10 to F-16), gpcp_nesdis_f10_*.dat, array from 1992
+#   dual  = the merge of the two, gpcp_nesdis_dual_*.dat, array from 1987 with fill
+#           before 1992 (the legacy dual array starts in 1992 and holds no fill months)
+# The chain is looked up through satellite_config, whose identifiers hold the opposite
+# words from the labels on purpose: LATE_CONSTELLATION_SAT is the morning chain's
+# satellite and EARLY_CONSTELLATION_SAT the late-morning chain's. Do not "align" them.
+GPCP_FAMILIES = {
+    'early': dict(
+        files={'PR1': 'gpcp_nesdis_pr1.dat',
+               'PR2': 'gpcp_nesdis_pr2.dat',
+               'SSA': 'gpcp_nesdis_ssa.dat'},
+        initial_year=1987,
+        chain_sats=(LATE_CONSTELLATION_SAT,),
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1987-present.'),
+    'late': dict(
+        files={'PR1': 'gpcp_nesdis_f10_pr1.dat',
+               'PR2': 'gpcp_nesdis_f10_pr2.dat',
+               'SSA': 'gpcp_nesdis_f10_ssa.dat'},
+        initial_year=1992,
+        chain_sats=(EARLY_CONSTELLATION_SAT,),
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1992-present.'),
+    'dual': dict(
+        files={'PR1': 'gpcp_nesdis_dual_pr1.dat',
+               'PR2': 'gpcp_nesdis_dual_pr2.dat',
+               'SSA': 'gpcp_nesdis_dual_ssa.dat'},
+        initial_year=1987,
+        chain_sats=(LATE_CONSTELLATION_SAT, EARLY_CONSTELLATION_SAT),
+        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Dual Satellite Products from 1992-present.'),
+}
+
+
+def gpcp_constellation(tag):
+    """The `constellation` attribute of one GPCP-input family.
+
+    It is the chain history of satellite_config, the same text the 2.5-degree files of
+    the same label carry. Until 18 November 2026 the three families carried short
+    labels written by hand ('SSMIS F-17: January 1987-present'), which named one
+    satellite for a record that four satellites made.
+    """
+    histories = [get_constellation_history(sat) for sat in GPCP_FAMILIES[tag]['chain_sats']]
+    if tag == 'dual':
+        return ('Merged where both chains are valid, January 1992-present. '
+                f'Early (morning) chain: {histories[0]}. '
+                f'Late (late-morning) chain: {histories[1]}')
+    return histories[0]
+
+
+def _run_gpcp_family_netcdf(tag, path_in='../gpcp/', out_dir='gpcp-input/'):
+    """Write one GPCP-input NetCDF family ('early', 'late' or 'dual', see GPCP_FAMILIES).
 
     Files land in gpcp-input/ named
         mw-hydro_{VERSION}_gpcp-input_{prod}_{tag}_{YYYYMM}.nc
-    matching the legacy IDL (gpcp_{late,early,dual}_netcdf.pro) and the
+    matching the legacy IDL (gpcp_{early,late,dual}_netcdf.pro) and the
     tar_mw-hydro_netcdf.sh 'gpcp-input' domain glob
     (mw-hydro_{VERSION}_gpcp-input_*_{YYYYMM}.*), so the archive tar packages them.
-    Before this the three writers wrote to 2.5-deg/ with a gpcp_{tag}_{prod} prefix
-    that matched no tar glob, so none of the GPCP NetCDF was archived.
+    Before 13 July 2026 the three writers wrote to 2.5-deg/ with a gpcp_{tag}_{prod}
+    prefix that matched no tar glob, so none of the GPCP NetCDF was archived.
 
     Each family writes PR1, PR2, and SSA. The legacy .pro files misnamed the PR2
     output 'pr1' (outname(1) = ..._pr1_{tag}_), so a v01 gpcp-input carries PR2 data
     in a PR1-named file with no real PR2; this uses the correct per-product name.
 
-    The 'late' = F-17 and 'early' = F-16 tags are the established GPCP convention
-    (separate from the 2.5/1.0-degree product _early_/_late_ labels) and are kept for
-    archive continuity. `initial_year` is the array/date origin (1987 for the F-17
-    timeline used by late and dual, 1992 for early); the dual's real coverage begins
-    1992 and is stated in `constellation`/`summary`, not the origin.
+    `initial_year` of the family is the origin of its array and of the dates in its
+    file names (1987 for early and dual, 1992 for late). The dual's real coverage
+    begins in 1992 and its earlier months are fill, which are not written.
     """
+    family = GPCP_FAMILIES[tag]
+    initial_year = family['initial_year']
+    constellation = gpcp_constellation(tag)
+    summary = family['summary']
     # Per-family history, preserving the legacy dual-specific wording (the dual
     # family's history said "dual GPCP file"; late/early said "GPCP file").
     if tag == 'dual':
@@ -541,7 +599,8 @@ def _run_gpcp_family_netcdf(tag, gpcp_files, initial_year, constellation, summar
     else:
         history = '2012-07-30, Hilawe Semunegus, NOAA/NCDC, created netCDF GPCP file.'
     lats, lons = make_coords(GRID_25)
-    for prod_key, bin_file in gpcp_files.items():
+    for prod_key, bin_name in family['files'].items():
+        bin_file = os.path.join(path_in, bin_name)
         if not os.path.exists(bin_file):
             continue
         out_prefix = f'mw-hydro_{PRODUCT_VERSION}_gpcp-input_{prod_key.lower()}_{tag}_'
@@ -568,53 +627,36 @@ def _run_gpcp_family_netcdf(tag, gpcp_files, initial_year, constellation, summar
                          dataset_name=os.path.basename(bin_file))
 
 
-def run_gpcp_late_netcdf(out_dir='gpcp-input/'):
-    """GPCP late-convention (F-17 morning primary) NetCDF -> gpcp-input/."""
-    path_in = '../gpcp/'
-    _run_gpcp_family_netcdf(
-        'late',
-        {'PR1': os.path.join(path_in, 'gpcp_nesdis_pr1.dat'),
-         'PR2': os.path.join(path_in, 'gpcp_nesdis_pr2.dat'),
-         'SSA': os.path.join(path_in, 'gpcp_nesdis_ssa.dat')},
-        initial_year=1987,
-        # GPCP-specific short label. Update the satellite token by hand at the WSF-M
-        # cutover; see the project documentation.
-        constellation='SSMIS F-17: January 1987-present',
-        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1987-present.',
-        out_dir=out_dir)
+def run_gpcp_early_netcdf(out_dir='gpcp-input/', path_in='../gpcp/'):
+    """GPCP-input files labeled _early_: the morning chain (F-08 to F-17), from
+    gpcp_nesdis_pr1.dat, gpcp_nesdis_pr2.dat and gpcp_nesdis_ssa.dat, array from 1987.
+    Replaces gpcp_early_netcdf.pro.
+
+    Between 14 July and 18 November 2026 the function of this name wrote the
+    late-morning chain's files under this label, and run_gpcp_late_netcdf wrote this
+    chain's. The two were exchanged on 18 November so that each name, its label and the
+    legacy writer of the same name agree.
+    """
+    _run_gpcp_family_netcdf('early', path_in=path_in, out_dir=out_dir)
 
 
-def run_gpcp_early_netcdf(out_dir='gpcp-input/'):
-    """GPCP early-convention (F-16 late-morning primary) NetCDF -> gpcp-input/."""
-    path_in = '../gpcp/'
-    _run_gpcp_family_netcdf(
-        'early',
-        {'PR1': os.path.join(path_in, 'gpcp_nesdis_f10_pr1.dat'),
-         'PR2': os.path.join(path_in, 'gpcp_nesdis_f10_pr2.dat'),
-         'SSA': os.path.join(path_in, 'gpcp_nesdis_f10_ssa.dat')},
-        initial_year=1992,
-        constellation='SSMIS F-16: January 1992-present',
-        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Hydrological Products from 1992-present.',
-        out_dir=out_dir)
+def run_gpcp_late_netcdf(out_dir='gpcp-input/', path_in='../gpcp/'):
+    """GPCP-input files labeled _late_: the late-morning chain (F-10 to F-16), from
+    gpcp_nesdis_f10_pr1.dat, gpcp_nesdis_f10_pr2.dat and gpcp_nesdis_f10_ssa.dat, array
+    from 1992. Replaces gpcp_late_netcdf.pro. See run_gpcp_early_netcdf for the exchange
+    of 18 November 2026.
+    """
+    _run_gpcp_family_netcdf('late', path_in=path_in, out_dir=out_dir)
 
 
-def run_gpcp_dual_netcdf(out_dir='gpcp-input/'):
+def run_gpcp_dual_netcdf(out_dir='gpcp-input/', path_in='../gpcp/'):
     """GPCP dual-satellite merged NetCDF -> gpcp-input/.
 
-    Array/date origin is 1987 (the F-17 timeline, matching the uniform Python
-    REF_DATE), so idx 473 -> June 2026. Dual coverage begins 1992 when F-16 joins;
-    that is stated in the metadata rather than the indexing origin.
+    Array/date origin is 1987 (the morning chain's timeline, matching the uniform
+    Python REF_DATE), so index 473 is June 2026. Dual coverage begins in 1992 when
+    the late-morning chain joins, and the fill months before it are not written.
     """
-    path_in = '../gpcp/'
-    _run_gpcp_family_netcdf(
-        'dual',
-        {'PR1': os.path.join(path_in, 'gpcp_nesdis_dual_pr1.dat'),
-         'PR2': os.path.join(path_in, 'gpcp_nesdis_dual_pr2.dat'),
-         'SSA': os.path.join(path_in, 'gpcp_nesdis_dual_ssa.dat')},
-        initial_year=1987,
-        constellation='SSMIS F-17 and F-16 merged; January 1992-present',
-        summary='NOAA STAR-EESIC-NCDC GPCP SSMI-SSMIS Dual Satellite Products from 1992-present.',
-        out_dir=out_dir)
+    _run_gpcp_family_netcdf('dual', path_in=path_in, out_dir=out_dir)
 
 
 def run_early_1deg(out_dir='1.0-deg/'):
@@ -804,15 +846,16 @@ def main():
         print('\n--- Early/morning constellation 1.0-deg (F08->F17, ncdc-bin) ---')
         run_early_1deg()
 
-    if ds in ('gpcplate', 'all'):
-        # GPCP late: F17 (GPCP convention labels F17 as "late") - correctly labeled throughout
-        print('\n--- GPCP late constellation (gpcp_late_netcdf, F17) ---')
-        run_gpcp_late_netcdf()
-
     if ds in ('gpcpearly', 'all'):
-        # GPCP early: F16 (GPCP convention labels F16 as "early") - correctly labeled throughout
-        print('\n--- GPCP early constellation (gpcp_early_netcdf, F16) ---')
+        # GPCP-input _early_: the morning chain, F-08 to F-17 (replaces gpcp_early_netcdf.pro).
+        # Until 18 November 2026 this option wrote the late-morning chain under this label.
+        print('\n--- GPCP-input early (morning chain, F08->F17, gpcp_nesdis_*.dat) ---')
         run_gpcp_early_netcdf()
+
+    if ds in ('gpcplate', 'all'):
+        # GPCP-input _late_: the late-morning chain, F-10 to F-16 (replaces gpcp_late_netcdf.pro).
+        print('\n--- GPCP-input late (late-morning chain, F10->F16, gpcp_nesdis_f10_*.dat) ---')
+        run_gpcp_late_netcdf()
 
     if ds in ('dual', 'all'):
         print('\n--- GPCP dual (gpcp_dual_netcdf) ---')

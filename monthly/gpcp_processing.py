@@ -14,6 +14,22 @@ NOTES
     - gpcp_f08 (IDL) -> gpcp_late()   : f17-2.5 rain, masked with snow/ice
     - gpcp_f10 (IDL) -> gpcp_early()  : f16-2.5 rain, masked with snow/ice
     - gpcp_f08_f10_dual (IDL) -> gpcp_dual() : merge f17+f16 weighted by sampling
+
+    NAMES. gpcp_late() and gpcp_early() are named after the identifiers of
+    satellite_config (LATE_CONSTELLATION_SAT, EARLY_CONSTELLATION_SAT), which hold
+    the opposite chains from their words and are kept that way on purpose. They are
+    NOT the labels of the product files. The files these functions write carry no
+    label, and the labels are applied by netcdf/generate_netcdf.py as follows.
+
+      function       satellite today   chain          binary written           product label
+      gpcp_late()    F-17              morning        gpcp_nesdis_pr?.dat      _early_
+      gpcp_early()   F-16              late morning   gpcp_nesdis_f10_pr?.dat  _late_
+      gpcp_dual()    F-17 with F-16    both           gpcp_nesdis_dual_*.dat   _dual_
+
+    Between 14 July and 18 November 2026 the netCDF writers applied the two
+    labels the other way round, on the belief that "late means F-17" was a GPCP
+    convention. No such convention exists. The legacy writers and every archived
+    file label the F-08 to F-17 chain early and the F-10 to F-16 chain late.
     - Grid: 144 × 72 (2.5°), GrADS format (N cols × M rows per month)
     - The binary files are sequential: jmon months of (144,72) float32 grids.
     - Initial year for f17 (f08 IDL): 1987; for f16 (f10 IDL): 1992
@@ -199,9 +215,11 @@ def gpcp_late(path_in=None, path_out='./gpcp/'):
                 # Apply masks (order matches IDL sequential if-then chain)
                 rain = np.where(rain < 0.0, MISSING, rain)
 
-                # Snow mask: months 43-60 = Apr 1990-Dec 1991 in F-17/F-08 record
-                # (these span a period of known F-08 snow-sensor anomaly; use climatology
-                #  instead of the actual observed snow fraction for those 18 months).
+                # Snow mask: months 43-60 = July 1990 to December 1991 in the F-17/F-08
+                # record (month 1 is January 1987). These span a period of known F-08
+                # snow-sensor anomaly, so the climatology is used instead of the observed
+                # snow fraction for those 18 months. This comment said "Apr 1990" until
+                # 18 November 2026, which month 43 is not.
                 # NOTE: this jmon range is F-17-record-specific (starts 1987).
                 # If _LATE_INIT_YEAR changes (e.g., WSF-M starts later), recalculate:
                 #   months 43-60 relative to the new start year may not be 1990.
@@ -271,6 +289,97 @@ def gpcp_early(path_in=None, path_out='./gpcp/'):
                 fout.write(rain.astype(np.float32).tobytes())
 
 
+def valid_rain(x):
+    """True where a masked GPCP rain value is an amount: finite and zero or more.
+
+    Zero is a valid amount. Every negative value is a flag or the fill and is
+    not an amount: the snow mask writes -100 times the snow fraction, the ice
+    mask writes minus the ice percent, and the fill is -999.99.
+    """
+    return np.isfinite(x) & (x >= 0.0)
+
+
+def valid_sampling(s):
+    """True where a sampling fraction is usable: finite and from 0 to 1.
+
+    Zero is a valid fraction (the cell was never sampled). The fill -999.99,
+    anything else below zero, anything above 1 and any non-finite value are not
+    fractions. On 18 November 2026 neither chain's sampling file, in the project
+    tree or the operational tree, held a value above 1 or a non-finite value, so
+    those two bounds are guards that changed nothing in the record of that day.
+    """
+    return np.isfinite(s) & (s >= 0.0) & (s <= 1.0)
+
+
+def dual_merge_mask(rain_primary, samp_primary, rain_secondary, samp_secondary):
+    """True where the dual product takes the weighted mean of the two chains:
+    both rain values are amounts and both sampling fractions are positive."""
+    return (valid_rain(rain_primary) & valid_rain(rain_secondary)
+            & valid_sampling(samp_primary) & valid_sampling(samp_secondary)
+            & (samp_primary > 0.0) & (samp_secondary > 0.0))
+
+
+def merge_dual_month(rain_primary, samp_primary, rain_secondary, samp_secondary):
+    """One month of the dual product. Returns (rain, sampling), both float32.
+
+    The primary chain is the morning chain (F-17 today) and the secondary chain
+    is the late-morning chain (F-16 today).
+
+    RAIN. A cell holds the sampling-weighted mean of the two chains only where
+    all four of these hold: the primary rain is an amount, the secondary rain is
+    an amount, the primary sampling fraction is positive, and the secondary
+    sampling fraction is positive. Everywhere else the primary value passes
+    through unchanged, with its snow flag, ice flag or fill. The secondary chain
+    is never used on its own, so the dual product has no more coverage than the
+    primary chain. A non-finite primary value is neither an amount nor a flag
+    and is written as fill.
+
+    SAMPLING. A cell holds the plain mean of the two chains' sampling fractions
+    wherever both are valid fractions, and fill elsewhere. It does not depend on
+    either rain value. It is a coverage diagnostic of the two chains together.
+    It is NOT the weight behind the rain value in a cell where the primary value
+    passed through, because that rain value rests on the primary chain alone.
+
+    WHAT THIS CHANGED (18 November 2026).
+    The legacy IDL (gpcp_f08_f10_dual.pro) and the Python until that day formed
+    the weighted mean wherever the primary rain was zero or more, without asking
+    whether the secondary value was an amount. Where the secondary chain held a
+    negative snow or ice flag with a positive sampling fraction, the flag entered
+    the mean, and a cell with valid primary rain could come out lower or
+    negative. That is a defect of the archived version 1 dual product, which is
+    left as it is. The Python until that day also wrote the sampling field as
+    fill wherever the primary rain of the second rain product was negative,
+    which the legacy never did.
+    """
+    rain_primary = np.asarray(rain_primary, dtype=np.float32)
+    rain_secondary = np.asarray(rain_secondary, dtype=np.float32)
+    samp_primary = np.asarray(samp_primary, dtype=np.float32)
+    samp_secondary = np.asarray(samp_secondary, dtype=np.float32)
+
+    samp_ok = valid_sampling(samp_primary) & valid_sampling(samp_secondary)
+    merge = dual_merge_mask(rain_primary, samp_primary, rain_secondary, samp_secondary)
+
+    samp_total = samp_secondary + samp_primary
+    # The mean is formed in single precision, as the legacy forms it. That keeps
+    # every cell the rule does not change bit for bit what the legacy and the
+    # files made before 18 November 2026 hold. Single precision has two limits,
+    # both far outside the product. Amounts near 1e38 overflow in the sum, and a
+    # mean that is not finite is not used: the primary value passes through.
+    # Sampling fractions near 1e-38 underflow, which a ratio of sample counts
+    # cannot reach. Cells outside `merge` are replaced below, so a zero or fill
+    # denominator there is of no consequence.
+    with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+        weighted = (rain_primary * samp_primary
+                    + rain_secondary * samp_secondary) / samp_total
+        mean_samp = samp_total / np.float32(2.0)
+    merge = merge & np.isfinite(weighted)
+
+    passthrough = np.where(np.isfinite(rain_primary), rain_primary, MISSING)
+    rain = np.where(merge, weighted, passthrough)
+    sampling = np.where(samp_ok, mean_samp, MISSING)
+    return rain.astype(np.float32), sampling.astype(np.float32)
+
+
 def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     """
     Merge the morning-chain and late-morning-chain GPCP estimates (dual-satellite
@@ -281,27 +390,45 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     late-morning chain). The path_f17/path_f16 parameter names are kept for
     backward compatibility.
 
-    Merge policy (faithful to the published v01 algorithm, gpcp_f08_f10_dual.pro):
-    F-17 is primary. A cell gets the sampling-weighted two-satellite average only
-    where the F-17 estimate is valid (>= 0) and the summed sampling fraction is
-    positive; otherwise the F-17 value (including its fill) passes through. The
-    dual product therefore never has more spatial coverage than F-17 alone, and
-    F-16 is never substituted on its own. This is a settled product decision
-    (2026-07-14), not an oversight: the product is delivered as a GPCP input,
-    and its F-17-primary meaning is part of that delivery contract; do not
-    "improve" it by substituting F-16 months.
-    The dual SSA output uses the PR2 pass's validity gate, matching the legacy
-    last-write-wins behavior.
+    The rule for one month is merge_dual_month(), which states it in full. In
+    short, F-17 is primary. A cell gets the sampling-weighted two-satellite
+    mean only where both chains hold a rain amount and a positive sampling
+    fraction, and the F-17 value, its flag or its fill passes through
+    everywhere else. F-16 is never substituted on its own. That the product is
+    F-17-primary is a settled product decision (2026-07-14), because the
+    product is delivered as a GPCP input. Do not "improve" it by substituting
+    F-16 months.
+
+    This is NOT the version 1 algorithm unchanged. Version 1
+    (gpcp_f08_f10_dual.pro) let a negative F-16 flag into the mean, and version
+    2 does not, by decision of 18 November 2026. The sampling field is the plain
+    mean of the two chains' fractions wherever both are valid, as in version 1.
+
+    The six input files must all exist. A missing one raises before any output
+    is opened, because opening an output truncates the dual file of the previous
+    run. The time axis starts in January of the morning chain's first year
+    (1987). Months before the late-morning chain begins (1992) are fill, and so
+    is every month after the last complete one.
     """
     import shutil
     if path_f17 is None:
         path_f17 = f'./{_LATE_SAT}-2.5/'
     if path_f16 is None:
         path_f16 = f'./{_EARLY_SAT}-2.5/'
-    os.makedirs(path_out, exist_ok=True)
 
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cy, cm = now.year, now.month
+    f17_ssa = os.path.join(path_f17, f'SSA-{_LATE_SAT}-2.5')
+    f16_ssa = os.path.join(path_f16, f'SSA-{_EARLY_SAT}-2.5')
+    rain_inputs = {
+        i: (os.path.join(path_out, f'gpcp_nesdis_pr{i}.dat'),
+            os.path.join(path_out, f'gpcp_nesdis_f10_pr{i}.dat'))
+        for i in (1, 2)}
+    needed = [f17_ssa, f16_ssa] + [f for pair in rain_inputs.values() for f in pair]
+    absent = [f for f in needed if not os.path.isfile(f)]
+    if absent:
+        raise FileNotFoundError(
+            'gpcp_dual: input file(s) missing, nothing written: ' + ', '.join(absent))
+
+    cy, cm = _current_year_month()
 
     n_months_f17 = _months_since(_LATE_INIT_YEAR)    # total months in late record
     # Write cutoff = the last COMPLETE month (the month before the current system
@@ -318,109 +445,80 @@ def gpcp_dual(path_f17=None, path_f16=None, path_out='./gpcp/'):
     # Copy SSA files - satellite suffix reflects current constellation primaries
     # (these names are fixed for GPCP archival compatibility; do not change)
     for src, dst in [
-        (os.path.join(path_f17, f'SSA-{_LATE_SAT}-2.5'), os.path.join(path_out, 'gpcp_nesdis_ssa.dat')),
-        (os.path.join(path_f16, f'SSA-{_EARLY_SAT}-2.5'), os.path.join(path_out, 'gpcp_nesdis_f10_ssa.dat')),
+        (f17_ssa, os.path.join(path_out, 'gpcp_nesdis_ssa.dat')),
+        (f16_ssa, os.path.join(path_out, 'gpcp_nesdis_f10_ssa.dat')),
     ]:
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-            print(f'  Copied {src} -> {dst}')
+        shutil.copy2(src, dst)
+        print(f'  Copied {src} -> {dst}')
 
     FILL = np.full((N_LON, N_LAT), MISSING, dtype=np.float32)
 
-    for iproduct in [1, 2]:
-        f17_pr = os.path.join(path_out, f'gpcp_nesdis_pr{iproduct}.dat')
-        f17_ssa = os.path.join(path_f17, f'SSA-{_LATE_SAT}-2.5')
-        f16_pr = os.path.join(path_out, f'gpcp_nesdis_f10_pr{iproduct}.dat')
-        f16_ssa = os.path.join(path_f16, f'SSA-{_EARLY_SAT}-2.5')
+    # The late-morning chain's record starts later than the morning chain's.
+    f16_offset = (_EARLY_INIT_YEAR - _LATE_INIT_YEAR) * 12   # 60 (1992-1987)
 
+    for iproduct in [1, 2]:
+        f17_pr, f16_pr = rain_inputs[iproduct]
         out_pr  = os.path.join(path_out, f'gpcp_nesdis_dual_pr{iproduct}.dat')
         out_ssa = os.path.join(path_out, 'gpcp_nesdis_dual_ssa.dat')
 
         print(f'  Writing {out_pr}')
 
-        # The dual SSA output depends on the per-product `valid` gate below
-        # (ssmi_11 is the PR1 or PR2 field), so the two product passes produce
-        # DIFFERENT SSA byte streams and the archived content has always been the
-        # PR2-gated one (the legacy IDL also reopened unit 15 per product, with
-        # the last pass winning). Writing it only on the final pass preserves the
-        # output bytes exactly while removing the truncate-and-rewrite window in
-        # which an interruption between passes left a PR1-gated or partial SSA
-        # file.
+        # The sampling field does not depend on the rain product, so both passes
+        # compute the same one, and it is written during the second pass only.
+        # Outputs are opened in place. An interruption during a pass can leave
+        # partial files, and during the second pass a finished first rain file
+        # can stand beside a partial sampling file.
         write_ssa = (iproduct == 2)
+        merged = nonfinite = 0
 
         with open(f17_pr, 'rb') as fp17, \
              open(f17_ssa, 'rb') as fs17, \
+             open(f16_pr, 'rb') as f16_pr_fh, \
+             open(f16_ssa, 'rb') as f16_ssa_fh, \
              open(out_pr, 'wb') as fpr_out:
             fssa_out = open(out_ssa, 'wb') if write_ssa else None
+            try:
+                for jmon in range(1, n_months_f17 + 1):
+                    ssmi_11 = read_month_slice(fp17, jmon)   # f17
+                    samp_11 = read_month_slice(fs17, jmon)   # f17 SSA
 
-            # The early-constellation record starts later than the late-constellation.
-            # Calculate the offset in months between the two start years.
-            f16_offset = (_EARLY_INIT_YEAR - _LATE_INIT_YEAR) * 12   # typically 60 (1992-1987)
-
-            # No explicit upper bound on the F-16 reads is needed (and adding one
-            # would REGRESS the degraded case): if an early binary is shorter than
-            # the late allocation (lagged or partial upstream run), read_month_slice
-            # returns a fill grid past EOF, samp_total goes negative, the `valid`
-            # gate falls to False, and out_rain passes the F-17 value through per
-            # cell, exactly the desired F-17-only degradation. Routing exhausted
-            # months to the fill branch instead would discard valid F-17 data.
-            # (Both source files are allocated by the same _months_since call in a
-            # normal run, so the bound would never bind there anyway.)
-
-            # Open f16 files separately
-            f16_pr_fh   = open(f16_pr,  'rb') if os.path.exists(f16_pr)  else None
-            f16_ssa_fh  = open(f16_ssa, 'rb') if os.path.exists(f16_ssa) else None
-
-            for jmon in range(1, n_months_f17 + 1):
-                ssmi_11 = read_month_slice(fp17, jmon)   # f17
-                samp_11 = read_month_slice(fs17, jmon)   # f17 SSA
-
-                if jmon > f16_offset and f16_pr_fh and f16_ssa_fh:
-                    # f16 data available from month 61 onward in f17 timeline
-                    ssmi_10 = read_month_slice(f16_pr_fh, jmon - f16_offset)
-                    samp_10 = read_month_slice(f16_ssa_fh, jmon - f16_offset)
-
-                    out_rain = FILL.copy()
-                    out_samp = FILL.copy()
-
-                    samp_total = samp_10 + samp_11
-
-                    # Guard against missing SSA fill values (-999.99) corrupting the
-                    # weighted average.  When either satellite's SSA is missing, its
-                    # fill value (-999.99) would appear in both the numerator and the
-                    # denominator, producing nonsensical results like -1000.86 mm/day
-                    # (observed in IDL reference for ~15 months in 2006-2008 when F-16
-                    # SSA had data gaps at season transition).  Python correctly falls
-                    # back to the F-17-only estimate (ssmi_11) when samp_total <= 0,
-                    # which is a deliberate IMPROVEMENT over the IDL reference.
-                    valid = (ssmi_11 >= 0.0) & (samp_total > 0.0)
-                    # Suppress numpy divide-by-zero for cells where valid=False;
-                    # those cells are overwritten by the np.where fallback anyway.
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        weighted = (ssmi_11 * samp_11 + ssmi_10 * samp_10) / samp_total
-                    out_rain = np.where(valid, weighted, ssmi_11)
-                    out_samp = np.where(valid, samp_total / 2.0, FILL)
-
-                    if jmon <= icurrent_month:
-                        fpr_out.write(out_rain.astype(np.float32).tobytes())
-                        if fssa_out:
-                            fssa_out.write(out_samp.astype(np.float32).tobytes())
-                    else:
+                    if jmon <= f16_offset or jmon > icurrent_month:
+                        # Before the late-morning chain's record, or after the
+                        # last complete month: fill. The F-16 handles are not
+                        # advanced before their record begins.
+                        if jmon > f16_offset:
+                            read_month_slice(f16_pr_fh, jmon - f16_offset)
+                            read_month_slice(f16_ssa_fh, jmon - f16_offset)
                         fpr_out.write(FILL.tobytes())
                         if fssa_out:
                             fssa_out.write(FILL.tobytes())
-                else:
-                    # Before f16 record: write fill
-                    fpr_out.write(FILL.tobytes())
-                    if fssa_out:
-                        fssa_out.write(FILL.tobytes())
+                        continue
 
-            if f16_pr_fh:
-                f16_pr_fh.close()
-            if f16_ssa_fh:
-                f16_ssa_fh.close()
-            if fssa_out:
-                fssa_out.close()
+                    # No upper bound on the F-16 reads is needed. If a
+                    # late-morning binary is shorter than the morning chain's
+                    # (a lagged or partial upstream run), read_month_slice
+                    # returns a fill grid past its end, neither F-16 field is
+                    # then valid, and every cell passes the F-17 value through.
+                    ssmi_10 = read_month_slice(f16_pr_fh, jmon - f16_offset)
+                    samp_10 = read_month_slice(f16_ssa_fh, jmon - f16_offset)
+
+                    out_rain, out_samp = merge_dual_month(ssmi_11, samp_11,
+                                                          ssmi_10, samp_10)
+                    nonfinite += int((~np.isfinite(ssmi_11)).sum())
+                    merged += int(dual_merge_mask(ssmi_11, samp_11,
+                                                  ssmi_10, samp_10).sum())
+
+                    fpr_out.write(out_rain.tobytes())
+                    if fssa_out:
+                        fssa_out.write(out_samp.tobytes())
+            finally:
+                if fssa_out:
+                    fssa_out.close()
+
+        print(f'    PR{iproduct}: cell-months merged from both chains {merged}')
+        if nonfinite:
+            print(f'    WARNING PR{iproduct}: {nonfinite} non-finite F-17 value(s) '
+                  f'written as fill')
 
 
 def main():

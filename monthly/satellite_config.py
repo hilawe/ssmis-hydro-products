@@ -11,7 +11,13 @@ PURPOSE
 
 ARCHITECTURE
     The pipeline has two distinct "constellation chains" defined by the
-    satellite's equatorial crossing time:
+    satellite's morning equatorial crossing time. The identifiers in this
+    file predate that naming and use the inverse words, so LATE here holds
+    the early (morning) chain and EARLY holds the late-morning chain. They
+    are kept unchanged because filenames, directories and
+    LATE_CONSTELLATION_SAT depend on them. Product files are labeled by
+    crossing time, `_early_` for the morning chain and `_late_` for the
+    late-morning chain.
 
     LATE  (morning crossing ~06h LST): F-08 -> F-11 -> F-13 -> F-17.
           Their combined multi-year record feeds the morning-chain archive.
