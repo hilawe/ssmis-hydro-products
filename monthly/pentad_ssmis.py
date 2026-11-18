@@ -24,15 +24,15 @@ import sys
 import os
 import argparse
 import calendar
+import hashlib
 import numpy as np
-from scipy.ndimage import maximum_filter1d
 
-# Re-use all algorithm functions from climalg_ssmis
+# The per-file processing, the averaging functions and the table loaders are the
+# monthly processor's own. Nothing of the retrieval is restated in this module.
 from climalg_ssmis import (
     NCOL, NROW, NT,
-    ta2tb, precip8, precip3, snowc, seaice, cloud, vapor,
     mean_precip, mean_lwp, mean_wvp, mean_snw, mean_ice, mean_ssa,
-    to_grads, load_luts, load_land_tag,
+    load_luts, load_land_tag, process_file, resolve_si_path,
 )
 
 M, N, SIZE = 72, 144, 2.5
@@ -57,115 +57,23 @@ def build_pentad_boundaries(yyyy):
 def process_file_pentad(fpath, tag_2d, add_oce, add_lnd, add_si,
                          rrmon, ii_map, jj_map, YYYY, JDAY):
     """
-    Process one TDR file, accumulate into rrmon.
-    Identical logic to climalg_ssmis.process_file but imported here inline
-    to avoid circular imports.
+    Process one TDR file and accumulate it into rrmon, on the 2.5-degree grid.
+
+    This calls climalg_ssmis.process_file, the monthly processor's function. The
+    legacy pentad and monthly Fortran programs have the same per-pixel code
+    (pentad-ssmis-2.5deg.f and climalg-ssmis-2.5deg.f do not differ between the
+    start of the day loop and the output step), so one function serves both.
+
+    Until 18 November 2026 this function was a second copy of that code, kept
+    here "to avoid circular imports", although no import between the two modules
+    is circular. The copy did not receive two repairs the monthly processor got
+    on 9 October 2026: it tested five channels for a missing pixel where the
+    Fortran tests six, and it masked equatorial sea ice one row off. Sharing the
+    function removes the duplicated per-file algorithm. This wrapper must still
+    pass the same grid, date and table arguments, in the order below.
     """
-    raw = np.fromfile(fpath, dtype=np.uint8)
-    expected = NROW * NCOL * 7
-    if raw.size != expected:
-        print(f'  Warning: size mismatch for {fpath}, skipping')
-        return False
-
-    data = raw.reshape(NROW, NCOL, 7)
-    ta = data.astype(np.float32) + 70.0
-
-    skip = ((ta[:, :, 0] == 102.0) & (ta[:, :, 2] == 102.0) &
-            (ta[:, :, 3] == 102.0) & (ta[:, :, 4] == 102.0) &
-            (ta[:, :, 6] == 102.0))
-
-    # kindex: 0-based row into the 161-entry LUT. Fortran uses NINT(TA)-139 as a
-    # 1-based index (row 1 = Ta 140 K), so the correct 0-based index is round(TA)-140.
-    kindex = np.clip(np.round(ta).astype(np.int32) - 140, 0, 160)
-    is_ocean = (tag_2d == 0)
-    is_missing_ch = (ta == 102.0)
-
-    ta_corr = ta.copy()
-    for ch in range(7):
-        k_ch = kindex[:, :, ch]
-        valid_ch = ~is_missing_ch[:, :, ch]
-        ta_corr[:, :, ch] = np.where(valid_ch & is_ocean,
-                                      ta[:, :, ch] - add_oce[k_ch, ch],
-                             np.where(valid_ch & ~is_ocean,
-                                      ta[:, :, ch] - add_lnd[k_ch, ch],
-                                      ta[:, :, ch]))
-
-    tb = ta2tb(ta_corr)
-
-    lsrain = maximum_filter1d(tag_2d.astype(np.int8), size=5, axis=1,
-                              mode='constant', cval=0).astype(bool)
-
-    rlat = (89.667 - 0.333 * np.arange(NROW)).astype(np.float32)
-    isnchk = np.zeros(NROW, dtype=bool)
-    if JDAY <= 181:
-        isnchk |= (rlat >= 60.0)
-        if JDAY <= 151:
-            isnchk |= (rlat >= 40.0)
-        if JDAY <= 91:
-            isnchk |= (rlat >= 25.0)
-    isnchk_2d = isnchk[:, np.newaxis]
-
-    rain1 = precip8(ta_corr, tb, lsrain,
-                    np.broadcast_to(isnchk_2d, (NROW, NCOL)), add_si)
-    rain2 = precip3(ta_corr, lsrain)
-    is_land_2d = (tag_2d == 1)
-    snow  = snowc(ta_corr, is_land_2d)
-
-    ichan = 3 if (YYYY == 1990 and JDAY >= 181) or YYYY == 1991 else 8
-    sice  = seaice(ta_corr, is_ocean, ichan)
-
-    row_idx = np.arange(NROW)
-    equat_mask = (np.abs(row_idx - NROW // 2) * (360.0 / NCOL) <= 40.0)[:, np.newaxis]
-    sice = np.where(equat_mask & (sice == 100.0), 0.0, sice)
-
-    lwp = cloud(ta_corr, tb, is_ocean, sice)
-    wvp = vapor(ta_corr, tb, is_ocean, sice, add_si)
-
-    ii_2d = ii_map[:, np.newaxis]
-    jj_2d = jj_map[np.newaxis, :]
-    ii_flat = np.broadcast_to(ii_2d, (NROW, NCOL)).ravel()
-    jj_flat = np.broadcast_to(jj_2d, (NROW, NCOL)).ravel()
-    valid_flat = (~skip).ravel()
-
-    np.add.at(rrmon[:, :, NT - 3], (ii_flat, jj_flat), 1)
-
-    ii_v = ii_flat[valid_flat]
-    jj_v = jj_flat[valid_flat]
-
-    def acc(k, vals):
-        np.add.at(rrmon[:, :, k], (ii_v, jj_v), vals)
-
-    is_ocean_flat = is_ocean.ravel()[valid_flat]
-    acc(NT - 1, is_ocean_flat.astype(np.float32))
-    acc(NT - 2, (~is_ocean_flat).astype(np.float32))
-
-    rain1_flat = rain1.ravel()[valid_flat]
-    rain2_flat = rain2.ravel()[valid_flat]
-    snow_flat  = snow.ravel()[valid_flat]
-    sice_flat  = sice.ravel()[valid_flat]
-    lwp_flat   = lwp.ravel()[valid_flat]
-    wvp_flat   = wvp.ravel()[valid_flat]
-
-    r1_pos = rain1_flat > 0.0
-    acc(0, np.where(r1_pos, rain1_flat, 0.0))
-    acc(1, r1_pos.astype(np.float32))
-
-    r2_pos = rain2_flat > 0.0
-    acc(2, np.where(r2_pos, rain2_flat, 0.0))
-    acc(3, r2_pos.astype(np.float32))
-
-    lwp_pos = lwp_flat > 0.02
-    acc(4, np.where(lwp_pos, lwp_flat, 0.0))
-    acc(5, lwp_pos.astype(np.float32))
-
-    wvp_pos = wvp_flat > 0.0
-    acc(6, np.where(wvp_pos, wvp_flat, 0.0))
-    acc(7, wvp_pos.astype(np.float32))
-
-    acc(8, (snow_flat == 100.0).astype(np.float32))
-    acc(9, (sice_flat == 100.0).astype(np.float32))
-
-    return True
+    return process_file(fpath, tag_2d, add_oce, add_lnd, add_si,
+                        rrmon, ii_map, jj_map, M, N, YYYY, JDAY, NROW // 2)
 
 
 def run(sat, yyyy, jday_start, jday_end, outdir=None, inpath=None, coeff_dir=None):
@@ -189,7 +97,12 @@ def run(sat, yyyy, jday_start, jday_end, outdir=None, inpath=None, coeff_dir=Non
     print(f'pentad_ssmis: sat={sat}, year={yyyy}, jdays=1-{jday_end}')
     print(f'  inpath={_inpath}  coeff={_coeff_dir}  outpath={outpath}')
 
-    add_oce, add_lnd, add_si = load_luts(_coeff_dir)
+    # The scattering-index table is the satellite's own when satellite_config names
+    # one and no coefficient directory was given, as in the monthly processor. Until
+    # 18 November 2026 the pentad processor always read the standard table.
+    _si_path = resolve_si_path(sat, coeff_dir)
+    print(f'  lut_add_si={_si_path}  sha256={hashlib.sha256(open(_si_path, "rb").read()).hexdigest()}')
+    add_oce, add_lnd, add_si = load_luts(_coeff_dir, si_path=_si_path)
     tag_2d = load_land_tag(os.path.join(_coeff_dir, 'NLNDSEA.TAG'))
 
     # 1-indexed binning to match Fortran INT(I*RES/SIZE)+1 convention;
