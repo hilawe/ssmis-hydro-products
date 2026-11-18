@@ -91,6 +91,13 @@ Global rainfall, January 2026:
   `monthly/lut_add_land`, `monthly/lut_add_si`): the files the processor reads,
   inherited with the legacy processing package and included unchanged. The
   conversion's README states what is and is not recorded about them.
+- **2.5-degree land/sea file** (`monthly/lndsea.25d`): the 144 by 72 grid that
+  `gpcp_processing.py` reads to apply its coastal masks. It came with the legacy
+  processing package, whose GPCP programs read it, and is included unchanged
+  (41,472 bytes, SHA-256
+  `2a9a6f3184b3bb34e13088f152366feb88c80e96775f61857887a4919bef4e6d`). It is byte
+  for byte the file in versions 2.0.1 and 2.1.0 of this project's Zenodo code
+  deposit. No record at hand names the data it was made from.
 - **Tests** (`tests/`): a pytest suite covering the radiometric conversion, the
   binary and NetCDF I/O contracts, grid geometry, retrieval invariants, the WSF-M
   adapter's parity with the operational decoder's rules on synthetic inputs, and a
