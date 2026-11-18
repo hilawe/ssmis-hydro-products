@@ -502,8 +502,8 @@ SNW_CCOLS   = [22, 31, 32, 34, 43, 45, 47, 54, 56]  # 9 interval colors
 SNW_OVER    = 59
 SNW_CMAP    = build_cmap(SNW_CCOLS, SNW_OVER)
 
-# CFR field: cloud fraction is a 0-1 fraction like snow, and the approved
-# design (eyes-only draft, 2026-07-19, promoted to permanent) reuses the snow
+# CFR field: cloud fraction is a 0-1 fraction like snow, and the design
+# adopted on 2026-07-19 reuses the snow
 # field's GrADS levels and colors. Named separately so the CFR image does not
 # silently change if the snow palette is ever retuned.
 CFR_LEVELS  = list(SNW_LEVELS)
@@ -645,8 +645,8 @@ def _month_is_valid(grid):
 # would paint 20-30 points of pure artifact across the central Arctic that
 # reads as ice loss.  Masking a polar cap does not rescue it, because the step
 # reaches down into the marginal ice zone.  So ICE is referenced to an
-# SSMIS-only window instead: shorter, but sensor-self-consistent and honestly
-# labeled.  2009 is the F-17 record start and also the start of the era the v02
+# SSMIS-only window instead: shorter, but sensor-self-consistent, and the label
+# names the window.  2009 is the F-17 record start and also the start of the era the v02
 # paper's own ICE/NSIDC-0079 validation uses.
 #
 # Scope of the ICE step: it affects CONCENTRATION anomalies only.  The paper's
@@ -656,9 +656,9 @@ def _month_is_valid(grid):
 # SSMIS), a change well inside the ±0.4 interannual spread, so that trend and
 # the paper's SSMIS-era validation are unaffected by this.
 #
-# Decided by Hilawe 2026-07-16 after the step was quantified.  A genuine 30-year
-# ICE normal needs inter-sensor homogenization, which is a research task and is
-# a separate research task, not attempted here.
+# Adopted 2026-07-16 after the step was quantified.  A genuine 30-year
+# ICE normal needs inter-sensor homogenization, which is a separate research
+# task and is not attempted here.
 # ---------------------------------------------------------------------------
 ANOM_BASELINE = {
     'SNW': (1991, 2020),
@@ -1878,11 +1878,11 @@ def gen_snw(sat, yy, mm, outdir, indir):
     anom_subtitle = None
     # The anomaly branch applies the same MIN_VALID_FRAC floor the baseline
     # years pass through (_month_is_valid), so a partially-written 1.0-degree
-    # month is never differenced against the gated WMO baseline (the round-2
-    # symmetric-gating principle; this was the one current-field path that
-    # still bypassed it, found by the multi-model review). The FIELD panels
+    # month is never differenced against the gated WMO baseline (the same
+    # gate on both sides of the difference). The FIELD panels
     # still render whatever the month holds - only the anomaly declines, and
-    # control then falls to the honestly-labeled 2.5-degree path below.
+    # control then falls to the 2.5-degree path below, whose label names its
+    # baseline.
     if snw_lons is LONS_1 and _month_is_valid(data):   # gated 1.0-degree field
         _b0, _b1 = ANOM_BASELINE['SNW']
         clim_1deg, n_base = _compute_climatology_1deg(
@@ -1896,8 +1896,8 @@ def gen_snw(sat, yy, mm, outdir, indir):
             anom = (ANOM_SCALE['SNW'] * (data - clim_1deg)).astype(np.float32)
             # Report the realized baseline length. It is the full WMO window only for
             # the morning primary (f17, 29 of 30 yr); the late chain covers fewer years
-            # (f16 ~15, f18 ~11 within 1991-2020), so naming the count keeps the label
-            # honest rather than implying a full 30-year normal for every satellite.
+            # (f16 ~15, f18 ~11 within 1991-2020), so the label names the count and
+            # does not imply a full 30-year normal for every satellite.
             _desc = _baseline_desc((_b0, _b1), n_base)
             anom_label = f'% departure from {_desc}'
             anom_subtitle = f'Anomaly Based on Departure from the {_desc}'
@@ -1914,8 +1914,8 @@ def gen_snw(sat, yy, mm, outdir, indir):
         # fewer than MIN_BASELINE_YEARS of history), this produces a MIXED figure:
         # 1.0-degree field panels beside a 2.5-degree anomaly, each drawn on its
         # own coordinate arrays (plot_polar_4panel takes them separately for
-        # exactly this reason). Snow prefers rendering-with-honest-label over the
-        # placeholder ICE uses; pinned by a regression test.
+        # exactly this reason). Snow prefers rendering with a label that names the
+        # baseline over the placeholder ICE uses, pinned by a regression test.
         fpath_25 = os.path.join(indir, f'{sat}-2.5', f'SNW{yy}-{mm}-{sat}-2.5')
         data_25  = read_grads_binary(fpath_25)
         clim_25  = _compute_snow_climatology(indir, sat, mon_idx,
@@ -2082,8 +2082,8 @@ def gen_cfr(sat, yy, mm, outdir, indir):
     """
     Monthly cloud fraction (CFR) global field map.
 
-    Promoted from the 2026-07-19 eyes-only diagnostic draft at Hilawe's
-    direction; the render is identical to that approved draft. Unlike the
+    Adopted from the diagnostic draft of 2026-07-19, with an identical render.
+    Unlike the
     PR1/LWP/WVP field maps (2.5-degree per-month binaries, ±50°), CFR reads
     the 1.0-degree yearly file and spans ±60°, matching its anomaly companion.
     There is no 2.5-degree fallback: a missing or too-sparse 1.0-degree month

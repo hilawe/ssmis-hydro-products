@@ -262,7 +262,7 @@ def test_baseline_desc_reports_passed_window():
 
 def test_snow_anomaly_gates_sparse_current(tmp_path, capsys):
     # The snow 1.0-degree anomaly branch must apply the same MIN_VALID_FRAC
-    # floor as the baseline (multi-model review find): a sparse current month
+    # floor as the baseline: a sparse current month
     # must NOT be differenced against the gated WMO baseline. We call the
     # branch condition directly: _month_is_valid on a sparse grid is False, so
     # the 1.0-degree anomaly branch is skipped.
@@ -275,12 +275,12 @@ def test_snow_anomaly_gates_sparse_current(tmp_path, capsys):
 
 
 def test_snow_mixed_resolution_fallback_policy(tmp_path, monkeypatch):
-    # PINS A DELIBERATE POLICY (do not "fix" without an owner decision): when
+    # PINS A DELIBERATE POLICY (a design choice, not a defect to repair): when
     # the 1.0-degree current snow field renders but its 1.0-degree baseline
     # declines (fewer than MIN_BASELINE_YEARS, e.g. a future satellite's first
     # years), gen_snw falls back to the 2.5-degree anomaly beside the
-    # 1.0-degree field panels - a mixed-resolution figure with an honest
-    # non-WMO label - rather than the placeholder ICE uses. plot_polar_4panel
+    # 1.0-degree field panels - a mixed-resolution figure whose label names
+    # its non-WMO baseline - rather than the placeholder ICE uses. plot_polar_4panel
     # takes separate field/anomaly coordinate arrays for exactly this case.
     root = str(tmp_path)
     sat = rmi.NCDC_BIN_SAT
@@ -311,7 +311,7 @@ def test_snow_mixed_resolution_fallback_policy(tmp_path, monkeypatch):
 
 
 def test_cfr_anomaly_end_to_end(tmp_path, monkeypatch):
-    # Behavioral pin for gen_cfr_anom (review find: the table pins alone would
+    # Behavioral pin for gen_cfr_anom (the table pins alone would
     # pass with a wrong product code, a missing x100 scale, or an unwired
     # function). Seed a current month and MIN_BASELINE_YEARS of baseline, then
     # verify the anomaly values and the significant plot_global arguments.
