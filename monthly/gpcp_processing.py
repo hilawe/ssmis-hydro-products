@@ -33,7 +33,9 @@ NOTES
     - Grid: 144 × 72 (2.5°), GrADS format (N cols × M rows per month)
     - The binary files are sequential: jmon months of (144,72) float32 grids.
     - Initial year for f17 (f08 IDL): 1987; for f16 (f10 IDL): 1992
-    - Snow climatology files: snow/SN<MM> (144×72 float32)
+    - Snow climatology files: snow/SN<MM> (144×72 float32), read for July 1990 to
+      December 1991 of the morning chain on every run. They are an input kept with
+      the data and are not distributed with the code.
     - Land/sea tag:  lndsea.25d (144×72 float32, whole numbers from -1 to 99,
       compared with 25 and 75 by the coastal masks, which read it as percent land)
 """

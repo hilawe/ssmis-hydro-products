@@ -43,7 +43,13 @@ science or the file formats.
   rainfall totals must scale as 5 days to 31.
 - `test_archive_scripts.py` - the driver and the two archive scripts run inside
   disposable trees: the archive step packages the tree that was processed, and
-  a wrong or missing configuration stops it. Needs bash and the GNU tools. It
+  a wrong or missing configuration stops it. Since 18 November 2026 it also
+  covers a scan for links that does not finish, a program whose failure must
+  end the run (date, find, tar, stat, md5sum), and an archive and manifest that
+  already exist when a run fails. Needs bash and the GNU tools. A few cases
+  block a folder with a file permission and skip for root, where a permission
+  blocks nothing. They run for an ordinary user, and with
+  `HYDRO_REQUIRE_PLAIN_USER_CASES=1` set they fail instead of skipping. It
   travels with the driver and the archive scripts, so a copy of the repository
   without those scripts does not carry this file.
 

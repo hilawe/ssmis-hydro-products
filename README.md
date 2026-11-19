@@ -104,6 +104,18 @@ Global rainfall, January 2026:
   deterministic bitwise golden-month regression. Continuous integration runs it
   on every push.
 
+Two inputs of the GPCP step are not here. `gpcp_processing.py` rebuilds its files
+from the first month of the record on every run, so it reads the multi-year monthly
+product files of each chain, which are data and are made by the steps before it.
+For July 1990 to December 1991 of the morning chain it also reads a monthly snow
+climatology, `monthly/snow/SN01` to `SN12` (twelve 144 by 72 grids of 41,472 bytes
+each), in place of that month's own snow product. The climatology came with the
+legacy processing package. It is not in this repository, and versions 2.0.1 and
+2.1.0 of the Zenodo code deposit do not hold it. The preparation notes of version
+2.1.0 list the SHA-256 of each of the twelve files. No record at hand names the
+data the climatology was made from. The masking tests write small stand-ins for
+it, so they show the rule and not a run of the historical record.
+
 ## Running the tests
 
 ```bash
