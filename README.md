@@ -33,7 +33,9 @@ version 2 agree within 0.001 in product units on the months tested. Version 2 al
 corrects the dual-satellite merge of the GPCP input product and updates the
 snow-cover anomaly baseline to the World Meteorological Organization 1991-2020
 climate normals. The historical record has not yet been reprocessed with
-version 2.
+version 2. Monthly production for the archive still runs on the legacy code, and
+version 2 is run beside it on the same inputs, without delivering files, until
+NCEI is ready to receive version 2 products.
 
 ## Principal Investigator
 
@@ -154,7 +156,8 @@ scientific Python stack. The golden-month regression runs only where the
   [doi:10.5281/zenodo.23424220](https://doi.org/10.5281/zenodo.23424220).
 - The processing source is also archived on Zenodo under the concept DOI
   [10.5281/zenodo.20127244](https://doi.org/10.5281/zenodo.20127244), which
-  resolves to the latest released version.
+  resolves to the latest released version. This repository can be ahead of that
+  release, so a citation of code run from here should name the commit.
 
 ## License
 
