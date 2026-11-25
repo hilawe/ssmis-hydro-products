@@ -37,6 +37,21 @@ version 2. Monthly production for the archive still runs on the legacy code, and
 version 2 is run beside it on the same inputs, without delivering files, until
 NCEI is ready to receive version 2 products.
 
+## Project status, 25 November 2026
+
+- **Monthly production.** Products have been made through October 2026. The October
+  products were made on 2 November 2026 with the legacy system, and November
+  follows in early December.
+- **Version 2.** It runs beside the legacy system each month on the same inputs
+  and delivers no files yet. Delivery starts when NCEI is ready to receive
+  version 2 products.
+- **Paper.** The revised manuscript went to the Journal of Applied Meteorology and
+  Climatology on 16 October 2026 and is under review.
+- **Successor sensors.** The AMSR2 conversion has run as a parallel, unpublished
+  stream beside F-16 since November 2026, and input from the WSF-M Microwave
+  Imager is under evaluation. No successor satellite is activated, and no
+  successor product is delivered.
+
 ## Principal Investigator
 
 Hilawe Semunegus (NOAA NCEI) is the Principal Investigator for the SSMI(S)
